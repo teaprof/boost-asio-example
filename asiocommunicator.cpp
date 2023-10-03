@@ -18,11 +18,6 @@ std::ostream& (&logendl)(std::ostream&) = std::endl;
 
 boost::asio::io_context& getContext()
 {
-/*
-    static boost::asio::io_context *context = 0;
-    if(context == nullptr)
-        context = new boost::asio::io_context;
-    return *context;*/
     static boost::asio::io_context context;
     return context;
 }
@@ -31,28 +26,31 @@ boost::asio::io_context& getContext()
 namespace detail {
 
 /*!
- * \brief This struct contains method to test the results of async operation.
- * \details Use testAndLock::test method of this struct in the beggining of async operation
+ * \brief This struct is used to check if async operation finished with error or not.
+ * \details This struct contains method checkAndLock::check to check
+ *
+ * Use сheckAndLock::check method of this struct in the beggining of async operation
  * completion handler to do some job related to error analysis and weak_ptr of calling object lock.
  */
-struct testAndLock
+struct CheckError
 {
     enum class opcode
     {
-        readHeader = 0, readBody, writeHeader, writeBody, connect, resolve, accept
+        accept = 0, resolve, connect, readHeader, readBody, writeHeader, writeBody
     };
+
 
     static const char* getopname(opcode code)
     {
         switch(code)
         {
+        case opcode::accept: return "ACCEPT";
         case opcode::resolve: return "RESOLVE";
         case opcode::connect: return "CONNECT";
         case opcode::readHeader: return "READHEADER";
         case opcode::readBody: return "READBODY";
         case opcode::writeHeader: return "WRITEHEADER";
         case opcode::writeBody: return "WRITEBODY";
-        case opcode::accept: return "ACCEPT";
         }
         return nullptr;
     }
@@ -67,16 +65,16 @@ struct testAndLock
     * a new status for connection.
     * If all checks are succeeded then ptr is not null and status is ASIOtalker::Status::connectionOk.
     */
-    template<class T>
-    static std::pair<std::shared_ptr<T>, detail::ASIOtalker::Status> testError(std::weak_ptr<T> wptr, const boost::system::error_code &ec, opcode op)
+    template<class CommunticatorObjectType> //CommunicatorObjectType could be ASIOtalker, ASIOserver or ASIOclient
+    static bool check(std::weak_ptr<CommunticatorObjectType> wptr, const boost::system::error_code &ec, opcode op)
     {
-        std::shared_ptr<T> ptr = wptr.lock();
-        if(ptr == nullptr)
+        if(wptr.expired())
         {
-            //object *wptr is destroyed already.
+            //communicator object *wptr is destroyed already, but asynchronous operation have not been finished.
             if(ec.value() == boost::system::errc::success) //no matter which category the value ec.category() belongs to
             {
-                //it's Ok, object is destroyed but some IO operation may require some time to complete
+                //in mostly cases it is Ok: since the object is destroyed the results of asynchronous operation is not
+                //interesting for caller and should be ignored.
                 log_info<<"Object destroyed but connection was still alive, operation = "<<getopname(op)<<logendl;
             } else {
                 //it's Ok, object is destroyed and some pending IO operations returns with error codes
@@ -86,7 +84,8 @@ struct testAndLock
                 log_error<<str.str()<<logendl;
                 throw std::runtime_error(str.str());
             }
-            return std::make_pair(ptr, detail::ASIOtalker::Status::destroyed);
+            //return detail::ASIOtalker::Status::destroyed;
+            return false;
         } else {
             auto status = detail::ASIOtalker::Status::working;
             //object is not destroyed, analyze the error
@@ -100,6 +99,7 @@ struct testAndLock
                     errorHandled = true;
                 }
                 //here other error handlers could be placed
+                //...
                 if(!errorHandled)
                 {
                     status = detail::ASIOtalker::Status::failed;
@@ -109,7 +109,8 @@ struct testAndLock
                         "message: "<<ec.message()<<logendl;
                 }
             }
-            return std::make_pair(ptr, status);
+            //return status;
+            return true;
         }
     }
 };
@@ -167,31 +168,41 @@ void ASIOtalker::send(Buffer &&buf)
         doWriteHeader();
 }
 
+template<class T>
+void callBack(boost::system::error_code ec, size_t len, std::shared_ptr<T> self,
+              std::function<void(T&)> onSuccessCallBack,
+              std::function<void(T&, boost::system::error_code& ec)> onFailCallBack)
+{
+    (void)len;
+    if(self.expired() == false)
+    {
+        auto obj = self.lock();
+        if(ec.failed())
+            onFailCallBack(*obj, ec); //this function can clear 'fail' flag
+        if(!ec.failed())
+            onSuccessCallBack(*obj);
+    } else {
+        if(ec.failed())
+            log_info<<"ec.failed"<<std::endl;
+    }
+}
+
 void ASIOtalker::doWriteHeader()
 {
     //at least one shared_ptr to 'this' pointer in your program should exists
     //before this line, otherwise bad_weak_ptr exception will be thrown
-    auto self(weak_from_this());
+    auto self(shared_from_this());
 
     if(status == ASIOtalker::Status::working && !outgoingQueue.empty())
     {
         writeInProgress = true;
         auto& msgBuffer = outgoingQueue.front();
         initializeHeader(currentWriteHeader, msgBuffer);
+        auto callback = std::bind(callBack<ASIOtalker>, std::placeholders::_1, std::placeholders::_2, self,
+                                  &ASIOtalker::doWriteBody, &ASIOtalker::onNetworkFail);
         boost::asio::async_write(socket,
                                  boost::asio::buffer(std::begin(currentWriteHeader), sizeof(currentWriteHeader)),
-                                [this, self](boost::system::error_code ec, size_t len)
-                                {
-                                    (void)len;
-                                    auto [ptr, newStatus] = testAndLock::testError(self, ec, testAndLock::opcode::writeBody);
-                                    if(ptr)
-                                    {
-                                        setStatus(newStatus);
-                                        if(newStatus == Status::working)
-                                            doWriteBody();
-                                    }
-                                }
-                                );
+                                 callback);
     };
 }
 
@@ -199,87 +210,62 @@ void ASIOtalker::doWriteBody()
 {    
     //at least one shared_ptr to 'this' pointer in your program should exists
     //before this line, otherwise bad_weak_ptr exception will be thrown
-    auto self(weak_from_this());
+    auto self(shared_from_this());
 
     if(status == ASIOtalker::Status::working && !outgoingQueue.empty())
     {
-        writeInProgress = true;
+        assert(writeInProgress);
         auto& msgBuffer = outgoingQueue.front();
+        auto callback = std::bind(callBack<ASIOtalker>, std::placeholders::_1, std::placeholders::_2, self,
+                                  &ASIOtalker::onWriteBodyFinished, &ASIOtalker::onNetworkFail);
         boost::asio::async_write(socket,
                                  boost::asio::buffer(msgBuffer.data(), msgBuffer.size()),
-                                 [this, self](boost::system::error_code ec, size_t len)
-                                 {
-                                    (void)len;
-                                    auto [ptr, newStatus] = testAndLock::testError(self, ec, testAndLock::opcode::writeBody);
-                                    if(ptr)
-                                    {
-                                        setStatus(newStatus);
-                                        if(newStatus == Status::working)
-                                        {
-                                            preallocatedBuffers.push(std::move(outgoingQueue.front()));
-                                            outgoingQueue.pop();
-                                            if(!outgoingQueue.empty())
-                                                //writequeue is not empty, initiate sending of the next queued message
-                                                doWriteHeader();
-                                            else
-                                                writeInProgress = false;
-                                        }
-                                    }
-                                 }
-                                );
+                                 callback);
     }
+}
+
+void ASIOtalker::onWriteBodyFinished()
+{
+    preallocatedBuffers.push(std::move(outgoingQueue.front()));
+    outgoingQueue.pop();
+    if(!outgoingQueue.empty())
+        //writequeue is not empty, initiate sending of the next queued message
+        doWriteHeader();
+    else
+        writeInProgress = false;
 }
 
 void ASIOtalker::doReadHeader()
 {    
     //at least one shared_ptr to 'this' pointer in your program should exists
     //before this line, otherwise bad_weak_ptr exception will be thrown
-    auto self(weak_from_this());
+    auto self(shared_from_this());
 
+    auto callback = std::bind(callBack<ASIOtalker>, std::placeholders::_1, std::placeholders::_2, self,
+                              &ASIOtalker::doReadBody, &ASIOtalker::onNetworkFail);
     boost::asio::async_read(socket,
                             boost::asio::buffer(std::begin(currentReadHeader), sizeof(currentReadHeader)),
-                            [this, self](boost::system::error_code ec, std::size_t len)
-                            {
-                                (void)len;
-                                auto [ptr, newStatus] = testAndLock::testError(self, ec, testAndLock::opcode::readHeader);
-                                if(ptr)
-                                {                                    
-                                    setStatus(newStatus);
-                                    if(newStatus == Status::working)
-                                    {
-                                        if(len > 0)
-                                            doReadBody();
-                                    }
-                                }
-                            }
-                           );
+                            callback);
 }
 
 void ASIOtalker::doReadBody()
 {
     //at least one shared_ptr to 'this' pointer in your program should exists
     //before this line, otherwise bad_weak_ptr exception will be thrown
-    auto self(weak_from_this());
+    auto self(shared_from_this());
 
     allocateReadBuf();
+    auto callback = std::bind(callBack<ASIOtalker>, std::placeholders::_1, std::placeholders::_2, self,
+                              &ASIOtalker::onReadBodyFinished, &ASIOtalker::onNetworkFail);
     boost::asio::async_read(socket,
                             boost::asio::buffer(currentReadbuf.data(), currentReadbuf.size()),
-                            [this, self](boost::system::error_code ec, std::size_t len)
-                            {
-                                (void)len;
-                                auto [ptr, newStatus] = testAndLock::testError(self, ec, testAndLock::opcode::readBody);
-                                if(ptr)
-                                {
-                                    setStatus(newStatus);
-                                    if(newStatus == Status::working && ptr)
-                                    {
-                                        if(len > 0)
-                                            incomingQueue.emplace(std::move(currentReadbuf));
-                                        doReadHeader();
-                                    }
-                                }
-                            }
-                           );
+                            callback);
+}
+
+void ASIOtalker::onReadBodyFinished()
+{
+    incomingQueue.emplace(std::move(currentReadbuf));
+    doReadHeader();
 }
 
 void ASIOtalker::close()
@@ -295,6 +281,12 @@ void ASIOtalker::close()
     if(ec != boost::system::errc::success)
         log_error<<"Error while shutdown socket: "<<ec.message()<<logendl;
     setStatus(Status::closed);
+}
+
+void ASIOtalker::onNetworkFail(boost::system::error_code& ec)
+{
+    if(ec.failed())
+        setStatus(Status::failed;
 }
 
 boost::asio::ip::tcp::socket& ASIOtalker::sock()
@@ -345,14 +337,14 @@ void ASIOserver::startAccept()
     log_trace<<"ASIOserver::start_accept";
     //at least one shared_ptr to 'this' pointer in your program should exists
     //before this line, otherwise bad_weak_ptr exception will be thrown
-    auto self(weak_from_this());
+    auto self(shared_from_this());
     listener = ASIOtalker::create(getContext());
 
     auto curSessionID = sessionCounter++;
     acceptor.async_accept(listener->sock(),
         [this, self, curSessionID](const error_code &ec)
         {
-            auto [ptr, newStatus] = testAndLock::testError(self, ec, testAndLock::opcode::accept);
+            auto [ptr, newStatus] = CheckError::check(self, ec, CheckError::opcode::accept);
             if(newStatus == ASIOtalker::Status::working && ptr)
             {
                 assert(listener != nullptr);
@@ -508,7 +500,7 @@ void ASIOclient::doResolve()
 {
     //at least one shared_ptr to 'this' pointer in your program should exists
     //before this line, otherwise bad_weak_ptr exception will be thrown
-    auto self(weak_from_this());
+    auto self(shared_from_this());
 
     status = ASIOclient::Status::resolving;
 
@@ -519,7 +511,7 @@ void ASIOclient::doResolve()
         [this, self, j](const boost::system::error_code& ec, boost::asio::ip::tcp::resolver::results_type results)
         {
             log_trace<<"Remote host resolved, attemp #"<<j<<" finished";
-            auto [ptr, newStatus] = testAndLock::testError(self, ec, testAndLock::opcode::accept);
+            auto [ptr, newStatus] = CheckError::check(self, ec, CheckError::opcode::accept);
             if(newStatus == ASIOtalker::Status::working && ptr && results.size() > 0)
             {
                 endpoints = results;
@@ -535,7 +527,7 @@ void ASIOclient::doConnect()
 {
     //at least one shared_ptr to 'this' pointer in your program should exists
     //before this line, otherwise bad_weak_ptr exception will be thrown
-    auto self(weak_from_this());
+    auto self(shared_from_this());
 
     assert(talker != nullptr);
     status = ASIOclient::Status::connecting;
@@ -543,7 +535,7 @@ void ASIOclient::doConnect()
         [this, self](const boost::system::error_code &ec, const typename boost::asio::ip::tcp::endpoint &ep)
         {
             (void)ep;
-            auto [ptr, newStatus] = testAndLock::testError(self, ec, testAndLock::opcode::accept);
+            auto [ptr, newStatus] = CheckError::check(self, ec, CheckError::opcode::accept);
             if(newStatus == ASIOtalker::Status::working && ptr)
             {
                 talker->start();

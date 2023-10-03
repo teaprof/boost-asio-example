@@ -95,9 +95,11 @@ private:
 class ASIOtalker : public std::enable_shared_from_this<ASIOtalker>
 {
 public:
+    //Possible values of the connection status
     enum class Status {
-        notStarted, working, closed, failed, destroyed
+        notStarted, working, closed, failed
     };
+
     enum class BufferPolicy
     {
         allocNewBuffers, collectAndUsePreallocatedBuffers
@@ -120,10 +122,6 @@ public:
 
     bool receive(Buffer& buf);
 
-    void doReadHeader();
-    void doReadBody();
-    void doWriteHeader();
-    void doWriteBody();
 
     void close();
 
@@ -132,6 +130,14 @@ public:
     void registerCallback(std::function<void(Status)> &&func);
 protected:
     ASIOtalker(boost::asio::io_context& context);
+private:
+    void doReadHeader();
+    void doReadBody();
+    void onReadBodyFinished();
+
+    void doWriteHeader();
+    void doWriteBody();
+    void onWriteBodyFinished();
 private:
     using msgHeaderType = uint32_t[2]; //msgHeaderType[0] is a special magic const to identify that header began, msgHeaderType[1] is a size of a following message
     Status status;
@@ -160,6 +166,9 @@ private:
 
     void setStatus(ASIOtalker::Status newStatus);
     std::function<void(Status)> onStatusUpdatedCallback;
+
+    //potentially, this function can clear error_code.fail flag
+    void onNetworkFail(boost::system::error_code& ec);
 };
 
 
