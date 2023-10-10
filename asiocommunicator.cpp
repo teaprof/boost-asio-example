@@ -189,8 +189,6 @@ void callBack(boost::system::error_code ec, size_t len, std::shared_ptr<T> self,
 
 void ASIOtalker::doWriteHeader()
 {
-    //at least one shared_ptr to 'this' pointer in your program should exists
-    //before this line, otherwise bad_weak_ptr exception will be thrown
     auto self(shared_from_this());
 
     if(status == ASIOtalker::Status::working && !outgoingQueue.empty())
@@ -207,7 +205,7 @@ void ASIOtalker::doWriteHeader()
 }
 
 void ASIOtalker::doWriteBody()
-{    
+{
     //at least one shared_ptr to 'this' pointer in your program should exists
     //before this line, otherwise bad_weak_ptr exception will be thrown
     auto self(shared_from_this());
@@ -217,14 +215,14 @@ void ASIOtalker::doWriteBody()
         assert(writeInProgress);
         auto& msgBuffer = outgoingQueue.front();
         auto callback = std::bind(callBack<ASIOtalker>, std::placeholders::_1, std::placeholders::_2, self,
-                                  &ASIOtalker::onWriteBodyFinished, &ASIOtalker::onNetworkFail);
+                                  &ASIOtalker::onWriteFinished, &ASIOtalker::onNetworkFail);
         boost::asio::async_write(socket,
                                  boost::asio::buffer(msgBuffer.data(), msgBuffer.size()),
                                  callback);
     }
 }
 
-void ASIOtalker::onWriteBodyFinished()
+void ASIOtalker::onWriteFinished()
 {
     preallocatedBuffers.push(std::move(outgoingQueue.front()));
     outgoingQueue.pop();
@@ -236,7 +234,7 @@ void ASIOtalker::onWriteBodyFinished()
 }
 
 void ASIOtalker::doReadHeader()
-{    
+{
     //at least one shared_ptr to 'this' pointer in your program should exists
     //before this line, otherwise bad_weak_ptr exception will be thrown
     auto self(shared_from_this());
@@ -256,13 +254,13 @@ void ASIOtalker::doReadBody()
 
     allocateReadBuf();
     auto callback = std::bind(callBack<ASIOtalker>, std::placeholders::_1, std::placeholders::_2, self,
-                              &ASIOtalker::onReadBodyFinished, &ASIOtalker::onNetworkFail);
+                              &ASIOtalker::onReadFinished, &ASIOtalker::onNetworkFail);
     boost::asio::async_read(socket,
                             boost::asio::buffer(currentReadbuf.data(), currentReadbuf.size()),
                             callback);
 }
 
-void ASIOtalker::onReadBodyFinished()
+void ASIOtalker::onReadFinished()
 {
     incomingQueue.emplace(std::move(currentReadbuf));
     doReadHeader();

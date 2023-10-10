@@ -7,6 +7,7 @@
 #include <queue>
 #include <map>
 #include <type_traits>
+#include <functional>
 
 namespace tea {
 
@@ -17,77 +18,140 @@ using Buffer = std::vector<byte>;
 
 namespace detail {
 
-//This class contains a list of Containers like std::vector and finds a
-//container with most appropriate capacity on demand. In this way, using of this
-//class can reduce the number of system calls such as malloc and free (new and delete).
-//The internal logic is very simple, it works good when maxTotalCapacity is
-//greater than average container capacity, and capacity is approximately
-//the same for all containers.
-template<class Container=Buffer>
-class PreallocatedBuffers
+struct Header
+{
+    //Header should start with the following code:
+    static constexpr uint32_t headerCodeBegin = 0x1234;
+
+    uint32_t code; //should be equal to headerCodeBegin
+    uint32_t len;  //len of the message in bytes
+    Header(uint32_t _len) : code(headerCodeBegin), len(_len) {}
+};
+
+class Writer: public std::enable_shared_from_this<ASIOtalker>
 {
 public:
-    PreallocatedBuffers(size_t _maxTotalCapacity = 1<<20) :
-        maxTotalCapacity(_maxTotalCapacity), curTotalCapacity(0)
-    {
+    Writer(std::function<void(Buffer&&)> onWriteFinished);
 
-    }
-
-    void push(Container&& buf)
-    {
-        if(curTotalCapacity + buf.capacity() < maxTotalCapacity)
-        {
-            mBuffers.emplace_back(std::move(buf));
-            curTotalCapacity += buf.capacity();
-        }
-    }
-    void find(size_t minimalSize, Container& buf)
-    {
-        size_t bestIdx = 0, bestSize = 0;
-        bool found = false;
-        //find container with minimal size but not less than minimalSize
-        for(size_t curIdx = 0; curIdx < mBuffers.size(); curIdx++)
-        {
-            size_t curSize = mBuffers[curIdx].size();
-            if(curSize >= minimalSize)
-            {
-                if(found)
-                {
-                    if(curSize < bestSize)
-                    {
-                        bestIdx = curIdx;
-                        bestSize = curSize;
-                        if(bestSize == minimalSize)
-                            break;
-                    }
-                } else {
-                    found = true;
-                    bestIdx = curIdx;
-                    bestSize = curSize;
-                    if(bestSize == minimalSize)
-                        break;
-                }
-            }
-        }
-        if(found)
-        {
-            auto& mybuf = mBuffers[bestIdx];
-            curTotalCapacity -= mybuf.capacity();
-            if(curTotalCapacity + buf.capacity() <= maxTotalCapacity)
-            {
-                curTotalCapacity += buf.capacity();
-                buf.swap(mybuf);
-            } else {
-                buf.swap(mybuf);
-                mBuffers.erase(mBuffers.begin() + bestIdx);
-            }
-        } else {
-            buf.reserve(minimalSize);
-        }
-    }
+    void send(Buffer&& Buf);
 private:
-    size_t maxTotalCapacity, curTotalCapacity;
-    std::vector<Container> mBuffers;
+    Header header;
+    Buffer body;
+    bool writeInProgess = false;
+
+    void doWriteHeader()
+    {
+        if(status == ASIOtalker::Status::working && !outgoingQueue.empty())
+        {
+            auto self(shared_from_this());
+            writeInProgress = true;
+            auto& msgBuffer = outgoingQueue.front();
+            initializeHeader(currentWriteHeader, msgBuffer);
+            header = Header(msgBuffer.size());
+            boost::asio::async_write(socket,
+                                     boost::asio::buffer(std::begin(header), sizeof(header)),
+                                     [this, self](boost::system::error_code ec, size_t len)
+                                     {
+                                         onWriteHeaderFinished(ec, len);
+                                     });
+        };
+    }
+
+    void onWriteHeaderFinished(boost::system::error_code ec, size_t len)
+    {
+        if(ec.failed)
+            if(onNetworkFailed)
+                onNetworkFailder(ec);
+            else
+                throw std::runtime_error("tea::asiocommunicator::Reader::onWriteHeaderFinished: async_write returned non-zero code");
+        doWriteBody();
+    }
+    void doWriteBody()
+    {
+        auto self(shared_from_this());
+        if(status == ASIOtalker::Status::working)
+        {
+            assert(writeInProgress);
+            assert(outg)
+            auto& msgBuffer = outgoingQueue.front();
+            auto callback = std::bind(callBack<ASIOtalker>, std::placeholders::_1, std::placeholders::_2, self,
+                                      &ASIOtalker::onWriteFinished, &ASIOtalker::onNetworkFail);
+            boost::asio::async_write(socket,
+                                     boost::asio::buffer(msgBuffer.data(), msgBuffer.size()),
+                                     callback);
+        }
+    }
+    void onWriteFinished();
+
+    /*    void initializeHeader(msgHeaderType& header, const Buffer& msg)
+    {
+        header[0] = 123; //magic constant identifying the beginning of the header
+        header[1] = msg.size();
+    }*/
+
+};
+
+class Reader: public std::enable_shared_from_this<ASIOtalker>
+{
+public:
+    std::shared_ptr<Reader> createReader(std::function<void(Buffer&&)> onReadFinished, std::function<void()> onNetworkFailed);
+    void receive();
+protected:
+    Reader(std::function<void(Buffer&&)> onReadFinished, std::function<void()> onNetworkFailed);
+private:
+    //callbacks:
+    std::function<void(Buffer&&)> onReadFinished;
+    std::function<void(boost::system::error_code)> onNetworkFailed;
+    Header header;
+    Buffer body;
+
+    void doReadHeader()
+    {
+        //at least one shared_ptr to 'this' pointer in your program should exists
+        //before this line, otherwise bad_weak_ptr exception will be thrown
+        auto self(shared_from_this());
+
+        boost::asio::async_read(socket,
+                            boost::asio::buffer(std::begin(header), sizeof(header)),
+                                [this, self](boost::system::error_code ec, size_t len)
+                                {
+                                    onReadHeaderFinished(ec, len);
+                                });
+    }
+    void onReadHeaderFinished(boost::system::error_code ec, size_t len)
+    {
+        if(header != Header::headerCodeBegin)
+            throw std::runtime_error("tea::asiocommunicator::Reader::onReadHeaderFinished: unexpected value, can't parse message header");
+        if(ec.failed)
+            if(onNetworkFailed)
+                onNetworkFailder(ec);
+            else
+                throw std::runtime_error("tea::asiocommunicator::Reader::onReadHeaderFinished: async_read returned non-zero code");
+        doReadBody();
+    }
+
+    void doReadBody()
+    {
+        auto self(shared_from_this());
+        currentReadbuf.resize(header.len);
+        boost::asio::async_read(socket,
+                                boost::asio::buffer(body.data(), header.len),
+                                [this, self](boost::system::error_code ec, size_t len)
+                                {
+                                    onReadBodyFinished(ec, len);
+                                });
+
+    }
+    void onReadBodyFinished(boost::system::error_code ec, size_t len)
+    {
+        if(ec.failed)
+            if(onNetworkFailed)
+                onNetworkFailder(ec);
+            else
+                throw std::runtime_error("tea::asiocommunicator::Reader::onReadHeaderFinished: async_read returned non-zero code");
+        //read next message
+        doReadHeader();
+    }
 };
 
 
@@ -125,42 +189,19 @@ public:
 
     void close();
 
+    //Status tracking routines:
     Status getStatus() { return status; }
-
-    void registerCallback(std::function<void(Status)> &&func);
+    void registerCallback(std::function<void(Status)> &&func); //func will be called when status is updated
 protected:
     ASIOtalker(boost::asio::io_context& context);
 private:
-    void doReadHeader();
-    void doReadBody();
-    void onReadBodyFinished();
-
-    void doWriteHeader();
-    void doWriteBody();
-    void onWriteBodyFinished();
 private:
-    using msgHeaderType = uint32_t[2]; //msgHeaderType[0] is a special magic const to identify that header began, msgHeaderType[1] is a size of a following message
     Status status;
-    boost::asio::ip::tcp::socket socket;
+
     bool writeInProgress;
-
-    void initializeHeader(msgHeaderType& header, const Buffer& msg)
-    {
-        header[0] = 123; //magic constant identifying the beginning of the header
-        header[1] = msg.size();
-    }
-
-    void allocateReadBuf()
-    {
-        if(currentReadHeader[0] != 123)
-            throw std::runtime_error("ASIOtalker::validateHeader: unexpected value, can't parse header");
-        currentReadbuf.resize(currentReadHeader[1]);
-    }
 
     msgHeaderType currentReadHeader, currentWriteHeader;
     Buffer currentReadbuf; //buffer for an incoming message that is currently being received
-    std::queue<Buffer> outgoingQueue; //buffer of outgoing messages that are ready to be sent
-    std::queue<Buffer> incomingQueue; //buffer of incoming messages that are already received
 
     PreallocatedBuffers<Buffer> preallocatedBuffers;
 
@@ -169,6 +210,18 @@ private:
 
     //potentially, this function can clear error_code.fail flag
     void onNetworkFail(boost::system::error_code& ec);
+
+    boost::asio::ip::tcp::socket socket;
+};
+
+class ASIOtalkerExtended
+{
+public:
+private:
+    std::shared_ptr<ASIOtalker> talker;
+
+    std::queue<Buffer> outgoingQueue; //buffer of outgoing messages that are ready to be sent
+    std::queue<Buffer> incomingQueue; //buffer of incoming messages that are already received
 };
 
 
