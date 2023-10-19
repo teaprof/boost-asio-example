@@ -1,6 +1,8 @@
 #include "asiocommunicator.hpp"
 #include <unistd.h>
 #include <iostream>
+#include <chrono>
+#include <thread>
 
 
 using namespace std;
@@ -28,56 +30,82 @@ void serverProcessMessage(const ClientToServer& input, ServerToClient& output)
 
 int server()
 {
-    cout<<"I'm a server"<<endl;
-    Server srv(port);
-    srv.startAccept();
-    cout<<"Server finished"<<endl;
+    cout<<"I'm a server."<<endl;
+    cout<<"Use Ctrl^C to stop me."<<endl;
+    boost::asio::io_context context;
+    Server srv(context);
+    srv.startAccept(port);
 
-    while(true)
+
+    size_t activeSessionCount = 0;
+    while(1)
     {
         srv.poll();
         size_t sessionID;
         ClientToServer input;
         if(srv.receiveAnySession(sessionID, input))
         {
+            std::cout<<"Server received message"<<std::endl;
             ServerToClient output;
             serverProcessMessage(input, output);
-            srv.sendcopy(sessionID, output);
+            srv.send(sessionID, output);
         }
-    };
-    return 0;
+        srv.removeFinishedSessions();
+
+        size_t new_activeSessionCount = srv.getActiveSessionsCount();
+        if(activeSessionCount != new_activeSessionCount)
+        {
+            activeSessionCount = new_activeSessionCount;
+            std::cout<<"Active session count: "<<activeSessionCount<<std::endl;
+        }
+    }
+    cout<<"Server finished"<<endl;
+    return 0;    
 }
 
 
 int client()
 {
-    cout<<"I'm a client"<<endl;
-    cout<<"Client finished"<<endl;
-    Client client;
-    client.connect("127.0.0.1", port);
-    Buffer inputbuf;
+    using namespace std::chrono_literals;
+    std::this_thread::sleep_for(1000ms);
+    cout<<"I'm a client."<<endl;
+    Client client;    
+    while(client.getStatus() != Client::Status::connectedOk)
+    {
+        client.sync_connect("127.0.0.1", port);
+    }
+
+    std::cout<<"Sending requests..."<<std::endl;
     for(size_t n = 0; n < 10; n++)
     {
-        Buffer outbuf(sizeof(ClientToServer));
-        ClientToServer *output = reinterpret_cast<ClientToServer*>(outbuf.data());
-        output->messageID = n;
-        output->content = n;
-        client.send(outbuf);
-        while(client.receive(inputbuf) == false)
-            client.poll();
-        ServerToClient* result = reinterpret_cast<ServerToClient*>(inputbuf.data());
-        cout<<result->messageID<<": "<<result->content<<endl;
+        ClientToServer clientMessage{n, n};
+        client.send(clientMessage);
     }
+    std::cout<<"Receiving answers..."<<std::endl;
+    int response_count = 0;
+    while(response_count < 10)
+    {
+        ServerToClient serverResponse;
+        if(client.receive(serverResponse))
+        {
+            cout<<serverResponse.messageID<<": "<<serverResponse.content<<endl;
+            response_count++;
+        }
+        client.poll();
+    }
+    cout<<"Client finished"<<endl;
     return 0;
 }
 
 int main()
 {
-    int pid = fork();
-    if(pid == 0)
-    {
+    try {
+#ifdef SERVER
         return server();
-    } else {
+#else
         return client();
+#endif
+    } catch (boost::system::error_code ec) {
+        std::cout<<ec.message()<<std::endl;
     }
 }

@@ -25,104 +25,10 @@ boost::asio::io_context& getContext()
 
 namespace detail {
 
-/*!
- * \brief This struct is used to check if async operation finished with error or not.
- * \details This struct contains method checkAndLock::check to check
- *
- * Use сheckAndLock::check method of this struct in the beggining of async operation
- * completion handler to do some job related to error analysis and weak_ptr of calling object lock.
- */
-struct CheckError
-{
-    enum class opcode
-    {
-        accept = 0, resolve, connect, readHeader, readBody, writeHeader, writeBody
-    };
-
-
-    static const char* getopname(opcode code)
-    {
-        switch(code)
-        {
-        case opcode::accept: return "ACCEPT";
-        case opcode::resolve: return "RESOLVE";
-        case opcode::connect: return "CONNECT";
-        case opcode::readHeader: return "READHEADER";
-        case opcode::readBody: return "READBODY";
-        case opcode::writeHeader: return "WRITEHEADER";
-        case opcode::writeBody: return "WRITEBODY";
-        }
-        return nullptr;
-    }
-
-
-    /*! @brief Analyzes error code ec
-    *   @details This function do following job:
-    * - check if wptr to T is valid
-    * - check error code in both cases (different cases for valid and invalid wptr)
-    *   Type T could be ASIOtalker, ASIOserver or ASIOclient
-    * @return return pair (ptr, status) ptr = wptr.lock() and status can be treated as
-    * a new status for connection.
-    * If all checks are succeeded then ptr is not null and status is ASIOtalker::Status::connectionOk.
-    */
-    template<class CommunticatorObjectType> //CommunicatorObjectType could be ASIOtalker, ASIOserver or ASIOclient
-    static bool check(std::weak_ptr<CommunticatorObjectType> wptr, const boost::system::error_code &ec, opcode op)
-    {
-        if(wptr.expired())
-        {
-            //communicator object *wptr is destroyed already, but asynchronous operation have not been finished.
-            if(ec.value() == boost::system::errc::success) //no matter which category the value ec.category() belongs to
-            {
-                //in mostly cases it is Ok: since the object is destroyed the results of asynchronous operation is not
-                //interesting for caller and should be ignored.
-                log_info<<"Object destroyed but connection was still alive, operation = "<<getopname(op)<<logendl;
-            } else {
-                //it's Ok, object is destroyed and some pending IO operations returns with error codes
-                std::stringstream str;
-                str<<"Network operation "<<getopname(op);
-                str<<" terminated unexpectedly after object already destroyed, error code = "<<ec<<", msg = "<<ec.message();
-                log_error<<str.str()<<logendl;
-                throw std::runtime_error(str.str());
-            }
-            //return detail::ASIOtalker::Status::destroyed;
-            return false;
-        } else {
-            auto status = detail::ASIOtalker::Status::working;
-            //object is not destroyed, analyze the error
-            if(ec.value() != boost::system::errc::success)
-            {
-                bool errorHandled = false;
-                if(ec.category() == boost::asio::error::get_misc_category() && ec.value() == boost::asio::error::eof)
-                {
-                    log_info<<"Connection closed"<<logendl;
-                    status = detail::ASIOtalker::Status::closed;
-                    errorHandled = true;
-                }
-                //here other error handlers could be placed
-                //...
-                if(!errorHandled)
-                {
-                    status = detail::ASIOtalker::Status::failed;
-                    log_info<<"Network operation "<<getopname(op)<<" terminated unexpectedly,"<<
-                        "error category: "<<ec.category().name()<<", "<<
-                        "error value: "<<ec.value()<<", "<<
-                        "message: "<<ec.message()<<logendl;
-                }
-            }
-            //return status;
-            return true;
-        }
-    }
-};
 
 std::shared_ptr<ASIOtalker> ASIOtalker::create(boost::asio::io_context& context)
 {
-    //since ASIOtalker::ASIOtalker(context) is protected, we shoud use this work-around to access it:
-    struct make_shared_enabler : public ASIOtalker
-    {
-        make_shared_enabler(boost::asio::io_context& context) : ASIOtalker(context) { }
-    };
-    return std::make_shared<make_shared_enabler>(context);
+    return std::shared_ptr(new ASIOtalker(context));
 }
 
 ASIOtalker::ASIOtalker(boost::asio::io_context& context) :
