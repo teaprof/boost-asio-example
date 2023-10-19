@@ -24,84 +24,111 @@ struct Header
     static constexpr uint32_t headerCodeBegin = 0x1234;
 
     uint32_t code; //should be equal to headerCodeBegin
-    uint32_t len;  //len of the message in bytes
-    Header(uint32_t _len) : code(headerCodeBegin), len(_len) {}
+    uint32_t msglen;  //len of the message in bytes
+    Header() : code(headerCodeBegin), msglen(0) {}
+    void* data() { return &code; }
+    size_t headerLen() { return sizeof(Header); }
+
+    void initialize(const Buffer& body)
+    {
+        code = headerCodeBegin;
+        msglen = body.size();
+    }
+
 };
 
-class Writer: public std::enable_shared_from_this<ASIOtalker>
+class Writer: public std::enable_shared_from_this<Writer>
 {
 public:
-    Writer(std::function<void(Buffer&&)> onWriteFinished);
+    Writer(std::function<void(Buffer&&)> onWriteFinished, std::function<void(boost::system::error_code, size_t)> onNetworkFailed);
 
-    void send(Buffer&& Buf);
+    void send(Buffer&& Buf) { std::swap(Buf, body); }
+
+    boost::system::error_code errorCode() { return error_code; };
+    bool writeInProgress() { return write_in_progress; };
 private:
+    bool write_in_progress = false;
+    boost::system::error_code error_code;
+    std::function<void(Buffer&&)> onWriteFinished;
+    std::function<void(boost::system::error_code ec, size_t len)> onNetworkFailed;
+
     Header header;
     Buffer body;
-    bool writeInProgess = false;
 
     void doWriteHeader()
     {
-        if(status == ASIOtalker::Status::working && !outgoingQueue.empty())
-        {
-            auto self(shared_from_this());
-            writeInProgress = true;
-            auto& msgBuffer = outgoingQueue.front();
-            initializeHeader(currentWriteHeader, msgBuffer);
-            header = Header(msgBuffer.size());
-            boost::asio::async_write(socket,
-                                     boost::asio::buffer(std::begin(header), sizeof(header)),
-                                     [this, self](boost::system::error_code ec, size_t len)
-                                     {
-                                         onWriteHeaderFinished(ec, len);
-                                     });
-        };
+        write_in_progress = true;
+        auto self(shared_from_this());
+        header.initialize(body);
+        boost::asio::async_write(socket,
+                                 boost::asio::buffer(header.data(), header.headerLen()),
+                                 [this, self](boost::system::error_code ec, size_t len)
+                                 {
+                                     onWriteHeaderFinished(ec, len);
+                                 });
     }
 
     void onWriteHeaderFinished(boost::system::error_code ec, size_t len)
     {
-        if(ec.failed)
+        error_code = ec;
+        if(ec.failed())
+        {
+            write_in_progress = true;
             if(onNetworkFailed)
-                onNetworkFailder(ec);
+                onNetworkFailed(ec, len);
             else
                 throw std::runtime_error("tea::asiocommunicator::Reader::onWriteHeaderFinished: async_write returned non-zero code");
-        doWriteBody();
-    }
-    void doWriteBody()
-    {
-        auto self(shared_from_this());
-        if(status == ASIOtalker::Status::working)
-        {
-            assert(writeInProgress);
-            assert(outg)
-            auto& msgBuffer = outgoingQueue.front();
-            auto callback = std::bind(callBack<ASIOtalker>, std::placeholders::_1, std::placeholders::_2, self,
-                                      &ASIOtalker::onWriteFinished, &ASIOtalker::onNetworkFail);
-            boost::asio::async_write(socket,
-                                     boost::asio::buffer(msgBuffer.data(), msgBuffer.size()),
-                                     callback);
+        } else {
+            doWriteBody();
         }
     }
-    void onWriteFinished();
 
-    /*    void initializeHeader(msgHeaderType& header, const Buffer& msg)
+    void doWriteBody()
+    {        
+        auto self(shared_from_this());
+        boost::asio::async_write(socket,
+                                 boost::asio::buffer(body.data(), body.size()),
+                                 [this, self](boost::system::error_code ec, size_t len)
+                                    {
+                                        onWriteBodyFinished(ec, len);
+                                 });
+    }
+
+    void onWriteBodyFinished(boost::system::error_code ec, size_t len)
     {
-        header[0] = 123; //magic constant identifying the beginning of the header
-        header[1] = msg.size();
-    }*/
-
+        write_in_progress = false;
+        error_code = ec;
+        if(ec.failed())
+        {
+            if(onNetworkFailed)
+                onNetworkFailed(ec, len);
+            else
+                throw std::runtime_error("tea::asiocommunicator::Reader::onWriteHeaderFinished: async_write returned non-zero code");
+        } else {
+            onWriteFinished(std::move(body));
+        }
+    }
 };
 
-class Reader: public std::enable_shared_from_this<ASIOtalker>
+class Reader: public std::enable_shared_from_this<Reader>
 {
 public:
-    std::shared_ptr<Reader> createReader(std::function<void(Buffer&&)> onReadFinished, std::function<void()> onNetworkFailed);
-    void receive();
+    std::shared_ptr<Reader> createReader(std::function<void(Header&&, Buffer&&)> onReadFinished, std::function<void(boost::system::error_code, size_t len)> onNetworkFailed);
+    void startReadAsync()
+    {
+        read_in_progress = true;
+        doReadHeader();
+    }
+    boost::system::error_code errorCode() { return error_code; };
+    bool readInProgress() {return read_in_progress; };
 protected:
     Reader(std::function<void(Buffer&&)> onReadFinished, std::function<void()> onNetworkFailed);
 private:
+    bool read_in_progress = false;
+    boost::system::error_code error_code;
     //callbacks:
-    std::function<void(Buffer&&)> onReadFinished;
-    std::function<void(boost::system::error_code)> onNetworkFailed;
+    std::function<void(Header&&, Buffer&&)> onReadFinished;
+    std::function<void(boost::system::error_code, size_t len)> onNetworkFailed;
     Header header;
     Buffer body;
 
@@ -112,7 +139,7 @@ private:
         auto self(shared_from_this());
 
         boost::asio::async_read(socket,
-                            boost::asio::buffer(std::begin(header), sizeof(header)),
+                            boost::asio::buffer(header.data(), header.headerLen()),
                                 [this, self](boost::system::error_code ec, size_t len)
                                 {
                                     onReadHeaderFinished(ec, len);
@@ -120,22 +147,27 @@ private:
     }
     void onReadHeaderFinished(boost::system::error_code ec, size_t len)
     {
-        if(header != Header::headerCodeBegin)
+        error_code = ec;
+        if(header.code != Header::headerCodeBegin)
             throw std::runtime_error("tea::asiocommunicator::Reader::onReadHeaderFinished: unexpected value, can't parse message header");
-        if(ec.failed)
+        if(ec.failed())
+        {
+            read_in_progress = false;
             if(onNetworkFailed)
-                onNetworkFailder(ec);
+                onNetworkFailed(ec, len);
             else
                 throw std::runtime_error("tea::asiocommunicator::Reader::onReadHeaderFinished: async_read returned non-zero code");
-        doReadBody();
+        } else {
+            doReadBody();
+        }
     }
 
     void doReadBody()
     {
         auto self(shared_from_this());
-        currentReadbuf.resize(header.len);
+        body.resize(header.msglen);
         boost::asio::async_read(socket,
-                                boost::asio::buffer(body.data(), header.len),
+                                boost::asio::buffer(body.data(), body.size()),
                                 [this, self](boost::system::error_code ec, size_t len)
                                 {
                                     onReadBodyFinished(ec, len);
@@ -144,13 +176,19 @@ private:
     }
     void onReadBodyFinished(boost::system::error_code ec, size_t len)
     {
-        if(ec.failed)
+        read_in_progress = false;
+        error_code = ec;
+        if(ec.failed())
+        {
             if(onNetworkFailed)
-                onNetworkFailder(ec);
+                onNetworkFailed(ec, len);
             else
                 throw std::runtime_error("tea::asiocommunicator::Reader::onReadHeaderFinished: async_read returned non-zero code");
-        //read next message
-        doReadHeader();
+        } else {
+            //call callback function
+            if(onReadFinished)
+                onReadFinished(std::move(header), std::move(body));
+        }
     }
 };
 
@@ -181,8 +219,25 @@ public:
     boost::asio::ip::tcp::socket& sock();
     void start();
 
-    void send(const Buffer& buf);
-    void send(Buffer&& buf);
+    void send(const Buffer& buf)
+    {
+        Buffer copy_of_buf(buf);
+        send(std::move(buf));
+    }
+    void send(Buffer&& buf)
+    {
+        if(writer.writeInProgress())
+        {
+            writeQueue.push(buf);
+        } else {
+            if(writeQueue.empty())
+            {
+                writer.send(std::move(buf));
+            } else {
+                writeFromBuffer();
+            }
+        }
+    }
 
     bool receive(Buffer& buf);
 
@@ -193,17 +248,46 @@ public:
     Status getStatus() { return status; }
     void registerCallback(std::function<void(Status)> &&func); //func will be called when status is updated
 protected:
-    ASIOtalker(boost::asio::io_context& context);
+    ASIOtalker(boost::asio::io_context& context) :
+        writer(onWriteFinished, onNetworkFailed),
+        reader(onReadFinished, onNetworkFailed) {};
 private:
+    static void onWriteFinished(std::weak_ptr<ASIOtalker> talker, Buffer&& buf)
+    {
+        if(talker.expired())
+            return;
+        talker.lock()->writeFromBuffer();
+    }
+    void writeFromBuffer()
+    {
+        if(writeQueue.empty())
+            return;
+        Buffer msg = writeQueue.front();
+        writeQueue.pop();
+        writer.send(std::move(msg));
+    }
+    static void onNetworkFailed(std::weak_ptr<ASIOtalker> talker, boost::system::error_code, size_t len)
+    {
+        if(talker.expired())
+            return;
+        talker.lock()->status = Status::failed;
+        //do we need to close reader and writer?
+    }
+    static void onReadFinished(std::weak_ptr<ASIOtalker> talker, Buffer&& buf)
+    {
+        if(talker.expired())
+            return;
+        auto self = talker.lock();
+        self->readQueue.emplace(std::move(buf));
+        self->reader.startReadAsync();
+    }
 private:
-    Status status;
-
-    bool writeInProgress;
-
-    msgHeaderType currentReadHeader, currentWriteHeader;
-    Buffer currentReadbuf; //buffer for an incoming message that is currently being received
-
-    PreallocatedBuffers<Buffer> preallocatedBuffers;
+    Reader reader;
+    Writer writer;
+    Status status = Status::notStarted;
+    //PreallocatedBuffers<Buffer> preallocatedBuffers;
+    std::queue<Buffer> readQueue;
+    std::queue<Buffer> writeQueue;
 
     void setStatus(ASIOtalker::Status newStatus);
     std::function<void(Status)> onStatusUpdatedCallback;
@@ -214,15 +298,6 @@ private:
     boost::asio::ip::tcp::socket socket;
 };
 
-class ASIOtalkerExtended
-{
-public:
-private:
-    std::shared_ptr<ASIOtalker> talker;
-
-    std::queue<Buffer> outgoingQueue; //buffer of outgoing messages that are ready to be sent
-    std::queue<Buffer> incomingQueue; //buffer of incoming messages that are already received
-};
 
 
 class ASIOserver : public std::enable_shared_from_this<ASIOserver>
