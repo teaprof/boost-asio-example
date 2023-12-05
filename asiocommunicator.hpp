@@ -402,9 +402,9 @@ private:
        close();
        status = Status::failed;
     }
-    SafeCallbackHolder<decltype(&ASIOBufferedTalker::onReadFinished)> onReadFinishedSafe;
-    SafeCallbackHolder<decltype(&ASIOBufferedTalker::onWriteFinished)> onWriteFinishedSafe;
-    SafeCallbackHolder<decltype(&ASIOBufferedTalker::onNetworkFailed)> onNetworkFailedSafe;
+    CallbackProtector<decltype(&ASIOBufferedTalker::onReadFinished)> onReadFinishedSafe;
+    CallbackProtector<decltype(&ASIOBufferedTalker::onWriteFinished)> onWriteFinishedSafe;
+    CallbackProtector<decltype(&ASIOBufferedTalker::onNetworkFailed)> onNetworkFailedSafe;
 
     std::shared_ptr<boost::asio::ip::tcp::socket> socket;
     std::shared_ptr<Writer> writer;
@@ -699,8 +699,8 @@ private:
 
     boost::asio::io_context& mcontext;
 
-    SafeCallbackHolder<decltype(&ASIOserver::onAccepted)> onAcceptedSafe;
-    SafeCallbackHolder<decltype(&ASIOserver::onAcceptFailed)> onAcceptFailedSafe;    
+    CallbackProtector<decltype(&ASIOserver::onAccepted)> onAcceptedSafe;
+    CallbackProtector<decltype(&ASIOserver::onAcceptFailed)> onAcceptFailedSafe;    
 
     std::map<size_t, ASIOBufferedTalker> sessions;
     std::shared_ptr<ASIOacceptor> acceptor;
@@ -796,10 +796,10 @@ private:
         status = Status::connectingFailed;
     }
 
-    SafeCallbackHolder<decltype(&ASIOclient::onResolved)> onResolvedSafe;
-    SafeCallbackHolder<decltype(&ASIOclient::onResolveFailed)> onResolveFailedSafe;
-    SafeCallbackHolder<decltype(&ASIOclient::onConnected)> onConnectedSafe;
-    SafeCallbackHolder<decltype(&ASIOclient::onConnectFailed)> onConnectFailedSafe;
+    CallbackProtector<decltype(&ASIOclient::onResolved)> onResolvedSafe;
+    CallbackProtector<decltype(&ASIOclient::onResolveFailed)> onResolveFailedSafe;
+    CallbackProtector<decltype(&ASIOclient::onConnected)> onConnectedSafe;
+    CallbackProtector<decltype(&ASIOclient::onConnectFailed)> onConnectFailedSafe;
     std::shared_ptr<ASIOresolver> resolver;
     std::shared_ptr<ASIOconnecter> connecter;
     ASIOBufferedTalker talker;

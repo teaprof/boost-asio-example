@@ -5,7 +5,7 @@
 #include<functional>
 
 template<typename Function> struct SafeCallback;
-template<typename Function> struct SafeCallbackHolder;
+template<typename Function> struct CallbackProtector;
 
 template<typename ClassType, typename ReturnType, typename ... Args>
 struct SafeCallback<ReturnType(ClassType::*)(Args...)>
@@ -37,17 +37,17 @@ private:
 
 
 template<typename ClassType, typename ReturnType, typename ... Args>
-struct SafeCallbackHolder<ReturnType(ClassType::*)(Args...)>
+struct CallbackProtector<ReturnType(ClassType::*)(Args...)>
 {
 private:
     std::shared_ptr<bool> isAlive;
 public:
     using SafeCallbackT = SafeCallback<ReturnType(ClassType::*)(Args...)>;
-    ~SafeCallbackHolder()
+    ~CallbackProtector()
     {
         *isAlive = false;
     }
-    SafeCallbackHolder(const typename SafeCallbackT::MemberFunctionType &f_, ClassType* obj_) :
+    CallbackProtector(const typename SafeCallbackT::MemberFunctionType &f_, ClassType* obj_) :
         isAlive(std::make_shared<bool>(true)),
         f(f_, obj_, isAlive)
         {}

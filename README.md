@@ -164,7 +164,7 @@ this purpose we utilize a shared_ptr to bool variable. Our implementation consis
 The first class `SafeCallback` is a wrapper for callback member function that is very close to std::function, but before invoking wrapped function it checks
 the boolean variable protecting this callback.
 
-The second class `SafeCallbackHolder` is a sentinel class that is designed to be placed inside the class containing the callback member function. When the sentinel 
+The second class `CallbackProtector` is a sentinel class that is designed to be placed inside the class containing the callback member function. When the sentinel 
 object is deleted, its destructor sets the boolean variable to false. This is a way how to protect member function from being called after the object is destroyed.
 
 (C) Egor Tsvetkov, 2023
