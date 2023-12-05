@@ -11,8 +11,9 @@ Original examples of using boost::asio library can be found at
 
 ## What is boost::asio?
 
-boost::asio (acronym for ASynchronous Input/Output) is a famous C++ library containing
-a well-designed set of classes and free functions implementing support of network.
+[boost::asio](https://www.boost.org/doc/libs/master/doc/html/boost_asio.html) 
+(acronym for ASynchronous Input/Output) is a famous C++ library which contains
+a well-designed set of classes and free functions supporting network operations.
 This library incorporates different approaches such as callback function and coroutines,
 but you can easily switch between them.
 
@@ -23,7 +24,7 @@ Documentation on boost::asio can be found [here](https://beta.boost.org/doc/libs
 
 Original boost::asio examples and tutorial codes are very concise. This is good
 for learning boost::asio library and understanding how it works, but real-life code 
-is more complex than these examples and usually includes more precise control of 
+is more complex than those examples and usually it requires more precise control of 
 buffers lifetimes, different hooks placed through the whole code, tracking of
 the connection status and many other features. Every time when I started a new project, 
 I took one of the boost::asio examples as a starting point and addded the features
@@ -34,20 +35,20 @@ my new projects.
 ## Three types of networking apps
 
 Any network application usage scenario can be categorised into one of three main types.
-Scenarios of different types have different requirements to the behaviour of application
+Scenarios of different types have different requirements to the behaviour of an application
 (especially, when network operation finishes with an error).
 
-1. The first scenario is an embedded applications (consisting of client and server parts) which have very simple logic. 
-Usually, such application is very small and it is running on a dedicated hardware. All
-messages usually have the same format. In case of a network error it is sufficient to restart 
+1. The first scenario includes embedded applications which have very simple logic. 
+Usually, such applications are very small and they are running on a dedicated hardware. All
+messages have simple static format. In case of a network error it is sufficient to restart 
 the application or the device. Many of the original boost::asio examples belong to this class
 (echo server, chat server, daytime server).
 
-2. The second class is desktop applications. Such applications have more complex
+3. The second class is desktop applications. Such applications have more complex
 behaviour to deal with network errors. They should help user to diagnose the reason
 of error, and some of them can recover after errors.
 
-3. The third class is server applications that aren't running on a dedicated hardware.
+4. The third class is server applications that aren't running on a dedicated hardware.
 Since other programs can be run on the same hardware, such programs should release
 memory resources as soon as possible. 
 
@@ -67,7 +68,7 @@ are in progress.
 Following incapsulation principle (and boost::asio), we can declare a class which holds the i/o buffer
 and callback member function which should be invoked when asynchronous operation
 completes (so-called completion handler). This class also exposes a function which
-starts asynchronous operation. Roughly speaking, such class is wrapper for 
+starts asynchronous operation. Roughly speaking, such class is the wrapper for
 asynchronous operation. Let us call such kind of objects the **communication objects**.
 
 When the asynchronous operation is in progress, the communication object should not
@@ -75,11 +76,11 @@ be deleted.
 
 In boost::asio examples, the special mechanism prevents deletion of such objects 
 when at least one asyncronous operation is in progress. This mechanism is based
-on creating  shared_ptr to such object and capturing it in lambdacallback function.
+on creating  shared_ptr to such object and capturing it in lambda callback function.
 After callback function have been executed, the corresponding shared_ptr is destroyed
-making possible to destroy communication object.
+making possible to destroy the communication object.
 
-When program doesn't need the communication object any more, it deletes shared_ptr 
+When the program no longer needs the communication object, it deletes shared_ptr 
 to this object. But the actual moment when communicator object will be 
 deleted depends on when the last asynchronous operation is completed.
 **In other words, the actual moment when the resources will be released depends
@@ -97,27 +98,27 @@ since this buffers can consume large amount of RAM.
 
 ### How boost::asio works
 
-Asynchonous calls are implemented in `boost::asio::io_context` object containing the information about current
+Asynchonous calls are implemented in `boost::asio::io_context` object which contains information about current
 progress of each of the asynchronous operations commited to this object. Main program should call `io_context.poll()` (or any similar function)
 to proceed in such operations. When some asynchronous operation have been finished, `io_context.poll`
-executes call-back functions provided by the user for this operation. 
+invokes call-back functions provided by the user for this operation. 
 These functions consume recently accepted data and/or
 initiate next asynchronous operation. 
 
 When the communication object (see above) is destroyed but the connection is not closed gracefully,
-the call to `io_context.poll` can invoke the callback function that is member of the
-this deleted object. In simple programs (like examples in the documentation for
-`boost::asio`) it is very easy to guarantee that `io_context::poll` will not be called
-after the object have been destroyed.
+calling to `io_context.poll` can invoke the callback function that is a member of that deleted object.
+In simple programs (like examples in the documentation for
+`boost::asio`) it is very easy to ensure that `io_context::poll` will not be called
+after that object is destroyed.
 
-In more complex applications, one `io_context` object can serve more than one connections. In this case,
-`io_context::poll` may be invoked to serve one connection object, while another object is already destroyed.
+In more complex applications, one `io_context` object can serve more than one connection. In this case,
+`io_context::poll` may be invoked to serve one connection object, while another object has already been destroyed.
 
 There are two solutions of this problem:
-1. stop asynchronous operations with deleted connection objects (boost::asio provides cancellation slots, 
+1. selectively stop all asynchronous operations for destroyed connection objects (boost::asio provides cancellation slots, 
 or you can call [cancel function](https://www.boost.org/doc/libs/1_83_0/doc/html/boost_asio/reference/basic_stream_socket/cancel/overload2.html)
 (but it has some issues with portatibility).
-2. Each callback function should check if corresponding connection object is still alive (in simple case,
+2. each callback function should check if the corresponding connection object is still alive (in simple case,
 if the message buffer is not deleted yet). 
 
 This example follows the second approach.
@@ -143,35 +144,27 @@ ASIOBufferedTalker, which holds
 buffers of incoming and outgoing messages),
 and a fresh buffer should be obtained for the next portion of data. Since the parent object can be already destroyed,
 this function should check it before calling any function of it. This can be achieved using `weak_ptr` to parent object.
-But we invent a special mechanism called safe callback (see below).
+But we use a special mechanism called SafeCallback (see below).
 
 - Server and client objects can be created in any way you want. They can be global variable, local variables of function `main` (placed to the stack), 
 or allocated in the heap. No matter how they are created and used, the asynchronous calls will work fine. This is the result of 
 using safe callback mechanism.
 
 
-- Finally, we generalize Server and Client classes by allowing send and receive any data type. This is achieved
+- Finally, we generalize Server and Client classes by allowing them to send and receive any data type. This is achieved
 by using templates. Of course, when you do `read<YourMessageType>(msg)`, you should be sure that counterpartner sends exactly the same data 
 (with the same representation of this data in memory).
 
 
-### Safe callback
+### Safe callback implementation
 
-Consider the case, when asynchronous read operation is ready and you need to swap buffers and call asynchronous read again. This
-should be done in member function of communicator object which wraps async read operation. This object guaranteed to live while
-async operation is in progress or it calls callback function of this object. But object that should consume the buffer with
-recently accepted message can be already destroyed. To deal with this case, using of weak pointers is a good idea. But in this
-case we should place our consumer object in the heap and create at least one shared_ptr to him.
+When callback function is member function of some object, we should check if this object is still alive before calling this function. For 
+this purpose we utilize a shared_ptr to bool variable. Our implementation consists of two classes. 
 
-This example uses another solution: create shared_ptr to a bool variable, indicating whether consumer object is alive or not. This
-way is implemented in two classes. The first class which is named `SafeCallback` wraps callback function. When it called it checks 
-this bool variable, and if it is true, executes wrapped callback function. If it is false, nothing is done (consumer object is destroyed,
-the accepted messaged is not needed). This class can be casted to `std::function`.
+The first class `SafeCallback` is a wrapper for callback member function that is very close to std::function, but before invoking wrapped function it checks
+the boolean variable protecting this callback.
 
-The second class named `SafeCallbackHolder` holds shared_ptr to the same bool variable too and sets it to false when its destructor
-is called. This class is designed to be a member of consumer class to automaticaly prevent calling consumer class members when the
-consumer objects is already destroyed. The `SafeCallbackHolder` class is initialized with the pointer to the callback member function,
-and can generate SafeCallback objects to pass them to the constructors of communicator objects. 
-
+The second class `SafeCallbackHolder` is a sentinel class that is designed to be placed inside the class containing the callback member function. When the sentinel 
+object is deleted, its destructor sets the boolean variable to false. This is a way how to protect member function from being called after the object is destroyed.
 
 (C) Egor Tsvetkov, 2023
