@@ -369,12 +369,12 @@ public:
         return status == Status::working;
     }
 private:
-    void onReadFinished(Header&& header, Buffer&& buf)
+    void onReadFinished([[maybe_unused]] Header&& header, Buffer&& buf)
     {
        readQueue.emplace(std::move(buf));
        reader->startReadAsync();
     }
-    void onWriteFinished(Buffer&& buf)
+    void onWriteFinished([[maybe_unused]] Buffer&& buf)
     {
         writeFromBuffer();
     }
@@ -386,7 +386,7 @@ private:
        writeQueue.pop();
        writer->send(std::move(msg));
     }
-    void onNetworkFailed(boost::system::error_code& ec, size_t len)
+    void onNetworkFailed(boost::system::error_code& ec, [[maybe_unused]] size_t len)
     {
        std::cout<<"ASIOtalker: "<<ec.message()<<std::endl;
        close();

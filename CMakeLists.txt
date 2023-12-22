@@ -5,6 +5,8 @@ project(asiocommunicator LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+add_compile_options(-Wall -Wextra -Wpedantic -Werror)
+
 add_executable(asiocommunicator_server main.cpp)
 target_compile_definitions(asiocommunicator_server PRIVATE SERVER)
 
@@ -18,4 +20,3 @@ install(TARGETS asiocommunicator_server asiocommunicator_client
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 
-add_compile_options(-Wall -Wextra -Wpedantic -Werror)
