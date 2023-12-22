@@ -138,7 +138,6 @@ private:
         write_in_progress = true;
         auto self(shared_from_this());
         header.initialize(body);
-        //std::cout<<"doWriteHeader::headerlen = "<<header.headerLen()<<std::endl;
         boost::asio::async_write(*socket,
                                  boost::asio::buffer(header.data(), header.headerLen()),
                                  std::bind(&Writer::onWriteHeaderFinished, self, std::placeholders::_1, std::placeholders::_2));
@@ -167,7 +166,6 @@ private:
 
     void onWriteBodyFinished(boost::system::error_code ec, size_t len)
     {
-        std::cout<<"onWriteBodyFinished"<<std::endl;
         write_in_progress = false;
         if(ec.failed())
         {
@@ -193,7 +191,6 @@ public:
     {
         assert(read_in_progress == false);
         doReadHeader();
-        //doReadBody();
     }
     boost::system::error_code errorCode() { return error_code; }
     bool readInProgress() {return read_in_progress; }
@@ -258,11 +255,9 @@ private:
             else
                 throw std::runtime_error("tea::asiocommunicator::Reader::onReadHeaderFinished: async_read returned non-zero code");
         } else {
-            //call callback function
             if(onReadFinished)
                 onReadFinished(std::move(header), std::move(body));
         }
-        std::cout<<"Readbody finished"<<std::endl;
     }
 };
 
@@ -288,9 +283,7 @@ public:
         socket(socket_),
         writer(Writer::create_shared_ptr(socket, onWriteFinishedSafe, onNetworkFailedSafe)), //todo: socket could be destroyed before Writer (or Reader) destoroyed
         reader(Reader::create_shared_ptr(socket, onReadFinishedSafe, onNetworkFailedSafe))
-        {
-            std::cout<<"ASIOBufferedTalker(&&socket_)"<<std::endl;
-        }
+        { }
 
     ASIOBufferedTalker(boost::asio::io_context &context) :
         onReadFinishedSafe(&ASIOBufferedTalker::onReadFinished, this),
@@ -299,9 +292,7 @@ public:
         socket(std::make_shared<boost::asio::ip::tcp::socket>(context)),
         writer(Writer::create_shared_ptr(socket, onWriteFinishedSafe, onNetworkFailedSafe)),
         reader(Reader::create_shared_ptr(socket, onReadFinishedSafe, onNetworkFailedSafe))
-        {
-            std::cout<<"ASIOBufferedTalker(&context)"<<std::endl;
-        }
+        { }
 
 
     //What should we do if move or copy constructor is called when async operation in progress?
@@ -311,13 +302,12 @@ public:
     //error in the code (what shoud we do with pending async operation called for source object?
     //Abandon it? Or redirect callback to a new object (there is no way to do this in the current project)?
     //2. If copy constructor is called when an async operation in progress, what should we do with
-    //this operation callbacks? How to copy the pernding async operation to a new object?
+    //this operation callbacks? How to copy the pending async operation to a new object?
     ASIOBufferedTalker(const ASIOBufferedTalker&) = delete;
     ASIOBufferedTalker(ASIOBufferedTalker&&) = delete;
 
     ~ASIOBufferedTalker() {}
 
-    //boost::asio::ip::tcp::socket& sock();
     void start()
     {
         reader->startReadAsync();
@@ -410,7 +400,6 @@ private:
     std::shared_ptr<Writer> writer;
     std::shared_ptr<Reader> reader;
     Status status = Status::notStarted;
-    //PreallocatedBuffers<Buffer> preallocatedBuffers;
     std::queue<Buffer> readQueue;
     std::queue<Buffer> writeQueue;
 };
@@ -430,16 +419,16 @@ public:
         //First, we should to close current operation
         acceptor.close();
         //Then we have two alternatives:
-        //Alternative 1: create new acceptor object (acceptor constructor will call open, bind and listen by itself)
+        //Alternative 1: create new acceptor object (acceptor constructor will call open, bind and listen by itself), like in the following code
         //acceptor = std::move(boost::asio::ip::tcp::acceptor(context, boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), mport)));
-        //Alternative 2: create new endpoint object
+        //
+        //Alternative 2: create new endpoint object like in the following code
         boost::asio::ip::tcp::endpoint endpoint(boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), port));
         acceptor.open(endpoint.protocol());
         acceptor.bind(endpoint);
         acceptor.listen();
         doAccept();
     }
-
     void start_accept()
     {
         doAccept();
@@ -540,7 +529,6 @@ public:
     }
     std::shared_ptr<boost::asio::ip::tcp::socket> socket()
     {
-        //return std::make_shared<boost::asio::ip::tcp::socket>(std::move(msocket));
         return msocket;
     }
 private:
@@ -576,7 +564,6 @@ private:
 };
 
 class ASIOserver
-///\todo remove client session if connection terminated
 {
 public:
     using error_code = boost::system::error_code;
@@ -669,10 +656,7 @@ public:
             if(it.second.getStatus() > ASIOBufferedTalker::Status::working)
                 sessionsToDel.push_back(it.first);
         for(const size_t session : sessionsToDel)
-        {
-            std::cout<<"Removing session "<<session<<std::endl;
             sessions.erase(session);
-        }
     }
 
 private:
@@ -694,7 +678,6 @@ private:
     void onAcceptFailed(const boost::system::error_code& ec)
     {
         std::cout<<ec.message()<<std::endl;
-        //nothing to do
     }
 
     boost::asio::io_context& mcontext;
@@ -810,17 +793,13 @@ private:
 template<class T>
 concept IsBuffer = std::same_as<Buffer, T>;
 
-template<class T>
-concept NotBuffer = !IsBuffer<T>;
-
-
 class Server : public detail::ASIOserver
 {
 public:
     template<typename ... Args>
     Server(Args&& ... args) : detail::ASIOserver(std::forward<Args>(args)...) {}
 
-    template<typename MsgType> requires NotBuffer<MsgType>
+    template<typename MsgType> requires (not IsBuffer<MsgType>)
     void send(size_t sessionID, const MsgType& msg)
     {
         Buffer buf(sizeof(msg));
@@ -828,7 +807,7 @@ public:
         detail::ASIOserver::send(sessionID, std::move(buf));
     }
 
-    template<typename MsgType> requires NotBuffer<MsgType>
+    template<typename MsgType> requires (not IsBuffer<MsgType>)
     bool receiveAnySession(size_t &sessionID, MsgType& msg)
     {
         Buffer buf;
@@ -842,7 +821,7 @@ public:
         return false;
     }
 
-    template<typename MsgType> requires NotBuffer<MsgType>
+    template<typename MsgType> requires (not IsBuffer<MsgType>)
     bool receiveBySessionID(size_t sessionID, MsgType& msg)
     {
         Buffer buf;
@@ -866,15 +845,14 @@ public:
     Client(Args&& ... args) : detail::ASIOclient(std::forward<Args>(args)...) {}
 
 
-    template<typename MsgType> requires NotBuffer<MsgType>
+    template<typename MsgType> requires (not IsBuffer<MsgType>)
     void send(const MsgType& msg)
     {
         Buffer buf(sizeof(msg));
         std::memcpy(buf.data(), &msg, sizeof(msg));
         detail::ASIOclient::send(std::move(buf));
     }
-
-    template<typename MsgType> requires NotBuffer<MsgType>
+    template<typename MsgType> requires (not IsBuffer<MsgType>)
     bool receive(MsgType& msg)
     {
         Buffer buf;
