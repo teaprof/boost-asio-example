@@ -43,6 +43,7 @@ int server()
         srv.poll();
         size_t sessionID;
         ClientToServer input;
+        //receive messages, process them and send back response
         if(srv.receiveAnySession(sessionID, input))
         {
             std::cout<<"Server received message"<<std::endl;
@@ -50,8 +51,10 @@ int server()
             serverProcessMessage(input, output);
             srv.send(sessionID, output);
         }
+        //remove finished sessions
         srv.removeFinishedSessions();
 
+        //print new status if status have been changed
         size_t new_activeSessionCount = srv.getActiveSessionsCount();
         if(activeSessionCount != new_activeSessionCount)
         {
@@ -66,13 +69,13 @@ int server()
 
 int client()
 {
-    using namespace std::chrono_literals;
-    std::this_thread::sleep_for(1000ms);
     cout<<"I'm a client."<<endl;
-    Client client;    
-    while(client.getStatus() != Client::Status::connectedOk)
+    Client client;
+    client.sync_connect("127.0.0.1", port);
+    if(client.getStatus() != Client::Status::connectedOk)
     {
-        client.sync_connect("127.0.0.1", port);
+        std::cout<<"Can't connect to remote server"<<std::endl;
+        return -1;
     }
 
     std::cout<<"Sending requests..."<<std::endl;
@@ -81,6 +84,7 @@ int client()
         ClientToServer clientMessage{n, n};
         client.send(clientMessage);
     }
+
     std::cout<<"Receiving answers..."<<std::endl;
     int response_count = 0;
     while(response_count < 10)
