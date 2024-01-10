@@ -34,7 +34,7 @@ my new projects.
 
 ## Three types of networking apps
 
-Any network application usage scenario can be categorised into one of three main types.
+All networking applications can be divided into three main types depending on their usage scenario.
 Scenarios of different types have different requirements to the behaviour of an application
 (especially, when network operation finishes with an error).
 
