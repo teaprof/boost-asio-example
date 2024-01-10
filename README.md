@@ -34,7 +34,7 @@ my new projects.
 
 ## Three types of networking apps
 
-All networking applications can be divided into three main types depending on their usage scenario.
+All networking applications can be divided into three main types depending on their usage scenarios.
 Scenarios of different types have different requirements to the behaviour of an application
 (especially, when network operation finishes with an error).
 
@@ -54,9 +54,9 @@ memory resources as soon as possible.
 
 This code is developed with the third category in mind.
 
-## Design of a resource-friendly networking application
+# Design of a resource-friendly networking application
 
-### Where is the problem?
+## Where is the problem?
 
 The boost::asio library supports synchonous and asynchronous calls. Here we discuss
 asynchronous calls since they should be preferred in high-performance applications.
@@ -96,7 +96,7 @@ Server application should destroy buffers of incoming and outgoing messages as s
 since this buffers can consume large amount of RAM.
 
 
-### How boost::asio works
+## How boost::asio works
 
 Asynchonous calls are implemented in `boost::asio::io_context` object which contains information about current
 progress of each of the asynchronous operations commited to this object. Main program should call `io_context.poll()` (or any similar function)
@@ -123,7 +123,7 @@ if the message buffer is not deleted yet).
 
 This example follows the second approach.
 
-### Solution
+## Solution
 
 The following ideas are implemented in the present code.
 
@@ -156,7 +156,7 @@ by using templates. Of course, when you do `read<YourMessageType>(msg)`, you sho
 (with the same representation of this data in memory).
 
 
-### Safe callback implementation
+## Safe callback implementation
 
 When callback function is member function of some object, we should check if this object is still alive before calling this function. For 
 this purpose we utilize a shared_ptr to bool variable. Our implementation consists of two classes. 
