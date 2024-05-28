@@ -21,77 +21,78 @@
 // THE SOFTWARE.
 
 #include "asiocommunicator.hpp"
-#include <unistd.h>
-#include <iostream>
+
 #include <chrono>
+#include <iostream>
 #include <thread>
+#include <unistd.h>
 
 
-using namespace std;
-using namespace tea::asiocommunicator;
+using tea::asiocommunicator::Server, tea::asiocommunicator::Client;
 
 constexpr int port = 20007;
+constexpr int message_count = 10;
 
-struct ClientToServer
+struct ClientToServerMsg
 {
-    size_t messageID;
-    size_t content;
+    size_t message_id{};
+    size_t content{};
 };
 
-struct ServerToClient
+struct ServerToClientMsg
 {
-    size_t messageID;
-    size_t content;
+    size_t message_id{};
+    size_t content{};
 };
 
-void serverProcessMessage(const ClientToServer& input, ServerToClient& output)
+void serverProcessMessage(const ClientToServerMsg& input, ServerToClientMsg& output)
 {
-    output.messageID = input.messageID;
+    output.message_id = input.message_id;
     output.content = input.content*2;
 }
 
 int server()
 {
-    cout<<"I'm a server."<<endl;
-    cout<<"Use Ctrl^C to stop me."<<endl;
+    std::cout<<"I'm a server."<<std::endl;
+    std::cout<<"Use Ctrl^C to stop me."<<std::endl;
     boost::asio::io_context context;
     Server srv(context);
     srv.startAccept(port);
 
 
-    size_t activeSessionCount = 0;
-    while(1)
+    size_t active_session_count = 0;
+    while(true)
     {
         srv.poll();
-        size_t sessionID;
-        ClientToServer input;
+        size_t session_id{};
+        ClientToServerMsg input;
         //receive messages, process them and send back response
-        if(srv.receiveAnySession(sessionID, input))
+        if(srv.receiveAnySession(session_id, input))
         {
             std::cout<<"Server received message"<<std::endl;
-            ServerToClient output;
+            ServerToClientMsg output;
             serverProcessMessage(input, output);
-            srv.send(sessionID, output);
+            srv.send(session_id, output);
         }
         //remove finished sessions
         srv.removeFinishedSessions();
 
         //print new status if status have been changed
-        size_t new_activeSessionCount = srv.getActiveSessionsCount();
-        if(activeSessionCount != new_activeSessionCount)
+        const size_t active_session_count_new = srv.getActiveSessionsCount();
+        if(active_session_count != active_session_count_new)
         {
-            activeSessionCount = new_activeSessionCount;
-            std::cout<<"Active session count: "<<activeSessionCount<<std::endl;
+            active_session_count = active_session_count_new;
+            std::cout<<"Active session count: "<<active_session_count<<std::endl;
         }
     }
-    cout<<"Server finished"<<endl;
+    std::cout<<"Server finished"<<std::endl;
     return 0;    
 }
 
 
 int client()
 {
-    cout<<"I'm a client."<<endl;
+    std::cout<<"I'm a client."<<std::endl;
     Client client;
     client.sync_connect("127.0.0.1", port);
     if(client.getStatus() != Client::Status::connectedOk)
@@ -101,25 +102,26 @@ int client()
     }
 
     std::cout<<"Sending requests..."<<std::endl;
-    for(size_t n = 0; n < 10; n++)
+    for(size_t message_id = 0; message_id < message_count; message_id++)
     {
-        ClientToServer clientMessage{n, n};
-        client.send(clientMessage);
+        auto message_content = message_id;
+        const ClientToServerMsg client_message{message_id, message_content};
+        client.send(client_message);
     }
 
     std::cout<<"Receiving answers..."<<std::endl;
     int response_count = 0;
-    while(response_count < 10)
+    while(response_count < message_count)
     {
-        ServerToClient serverResponse;
-        if(client.receive(serverResponse))
+        ServerToClientMsg server_response;
+        if(client.receive(server_response))
         {
-            cout<<serverResponse.messageID<<": "<<serverResponse.content<<endl;
+            std::cout<<server_response.message_id<<": "<<server_response.content<<std::endl;
             response_count++;
         }
         client.poll();
     }
-    cout<<"Client finished"<<endl;
+    std::cout<<"Client finished"<<std::endl;
     return 0;
 }
 
@@ -131,7 +133,9 @@ int main()
 #else
         return client();
 #endif
-    } catch (boost::system::error_code ec) {
+    } catch (const boost::system::error_code& ec) {
         std::cout<<ec.message()<<std::endl;
+    } catch (...) {
+        std::cout<<"Unhandled exception"<<std::endl;
     }
 }
