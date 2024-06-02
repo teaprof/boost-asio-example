@@ -97,7 +97,7 @@ int client()
     client.sync_connect("127.0.0.1", port);
     if(client.getStatus() != Client::Status::connectedOk)
     {
-        std::cout<<"Can't connect to remote server"<<std::endl;
+        std::cout<<"Can't connect to remote server (is server running?)"<<std::endl;
         return -1;
     }
 
