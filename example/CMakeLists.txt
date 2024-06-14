@@ -1,6 +1,5 @@
-cmake_minimum_required(VERSION 3.5)
-
 project(asiocommunicator LANGUAGES CXX)
+cmake_minimum_required(VERSION 3.5)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -11,6 +10,7 @@ add_compile_options(-Wall -Wextra -Wpedantic -Werror)
 
 add_executable(asiocommunicator_server main.cpp)
 target_compile_definitions(asiocommunicator_server PRIVATE SERVER)
+include_directories(../include)
 
 add_executable(asiocommunicator_client main.cpp)
 

@@ -20,7 +20,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-#include "asiocommunicator.hpp"
+#include <tea/asiocommunicator.hpp>
 
 #include <chrono>
 #include <iostream>
@@ -28,7 +28,8 @@
 #include <unistd.h>
 
 
-using tea::asiocommunicator::Server, tea::asiocommunicator::Client;
+using tea::asiocommunicator::Server;
+using tea::asiocommunicator::Client;
 
 constexpr int port = 20007;
 constexpr int message_count = 10;

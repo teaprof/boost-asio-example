@@ -34,14 +34,12 @@
 #include <iostream>
 #include <optional>
 
-namespace tea {
-
-namespace asiocommunicator {
+namespace tea::asiocommunicator {
 
 using byte = uint8_t;
 using Buffer = std::vector<byte>;
 
-using port_t = unsigned short; //C++ standard requires that it is at least 16 bits
+using port_t = uint16_t;
 static_assert(sizeof(port_t) >= 2, "size of port_t should be atleat 2 bytes");
 
 namespace detail {
@@ -49,22 +47,22 @@ namespace detail {
 struct Header final
 {
     //Header should start with the following code:
-    static constexpr uint32_t headerCodeBegin = 0x1234;
+    static constexpr uint32_t header_code_begin = 0x1234;
 
-    uint32_t code; //should be equal to headerCodeBegin
-    uint32_t msglen;  //len of the message in bytes
-    Header() : code(headerCodeBegin), msglen(0) {}
+    uint32_t code; //should be equal to header_code_begin
+    uint32_t msglen{0};  //len of the message in bytes
+    Header() : code(header_code_begin) {}
     void* data()
     {
         return &code;
     }
-    size_t headerLen()
+    static size_t headerLen()
     {
         return sizeof(Header);
     }
     void initialize(const Buffer& body)
     {
-        code = headerCodeBegin;
+        code = header_code_begin;
         msglen = body.size();
     }
 };
@@ -91,19 +89,19 @@ struct GetContext
     }
 };
 
-//boost::asio::ip::tcp::socket sss(GetContext::get());
-
 template<class T>
 class AsyncOperationWaiter: public std::enable_shared_from_this<T>
 {
 public:
     AsyncOperationWaiter() = default;
-    //AsyncOperationCaller(boost::asio::ip::tcp::socket&) = default;
 
     //we should not copy or move this object because we don't know
     //what we should do with pending io operations.
     AsyncOperationWaiter(const AsyncOperationWaiter&) = delete;
     AsyncOperationWaiter(AsyncOperationWaiter&&) = delete;
+    void operator=(const AsyncOperationWaiter&) = delete;
+    void operator=(AsyncOperationWaiter&&) = delete;
+    ~AsyncOperationWaiter() = default;
 
 
     //All derived classes should hide their constructors because only shared_ptrs
@@ -112,14 +110,12 @@ public:
     template<typename ... Args>
     static std::shared_ptr<T> create_shared_ptr(Args&&...args)
     {
-        struct make_shared_enabler : public T
+        struct MakeSharedEnabler : public T
         {
-            make_shared_enabler(Args...args) : T(std::forward<Args>(args)...) { }
+            explicit MakeSharedEnabler(Args...args) : T(std::forward<Args>(args)...) { }
         };
-        return std::make_shared<make_shared_enabler>(std::forward<Args>(args)...);
+        return std::make_shared<MakeSharedEnabler>(std::forward<Args>(args)...);
     }
-protected:
-    //boost::asio::ip::tcp::socket& socket; //some of derived classes requires context, not socket
 };
 
 
@@ -127,52 +123,53 @@ class Writer: public AsyncOperationWaiter<Writer>
 {
     friend class AsyncOperationWaiter<Writer>;
 public:
-    void setSocket(std::shared_ptr<boost::asio::ip::tcp::socket> sock)
-    {
-        socket = sock;
+    // \todo: is this function needed?
+    void setSocket(std::shared_ptr<boost::asio::ip::tcp::socket> socket) {
+        socket_ = std::move(socket);
     }
 
-    void send(Buffer&& Buf)
+    void send(Buffer&& buffer)
     {
-        assert(write_in_progress == false);
-        std::swap(Buf, body);
+        assert(write_in_progress_ == false);
+        body_ = std::move(buffer);
         doWriteHeader();
     }
 
     void close() {}
-    bool writeInProgress() {return write_in_progress;}
+    bool writeInProgress() const {return write_in_progress_;}
 private:
-    Writer(std::shared_ptr<boost::asio::ip::tcp::socket> socket_, std::function<onWriteFinishedT> onWriteFinished_, std::function<onNetworkFailedT> onNetworkFailed_) :
-        onWriteFinished(onWriteFinished_), onNetworkFailed(onNetworkFailed_), socket(socket_) {}
+    Writer(std::shared_ptr<boost::asio::ip::tcp::socket> socket, std::function<onWriteFinishedT> on_write_finished, std::function<onNetworkFailedT> on_network_failed) :
+        on_write_finished_(std::move(on_write_finished)), on_network_failed_(std::move(on_network_failed)), socket_(std::move(socket)) {}
 
 
-    bool write_in_progress = false;
-    std::function<onWriteFinishedT> onWriteFinished;
-    std::function<onNetworkFailedT> onNetworkFailed;
-    std::shared_ptr<boost::asio::ip::tcp::socket> socket;
+    bool write_in_progress_ = false;
+    std::function<onWriteFinishedT> on_write_finished_;
+    std::function<onNetworkFailedT> on_network_failed_;
+    std::shared_ptr<boost::asio::ip::tcp::socket> socket_;
 
-    Header header;
-    Buffer body;
+    Header header_;
+    Buffer body_;
 
     void doWriteHeader()
     {
-        write_in_progress = true;
+        write_in_progress_ = true;
         auto self(shared_from_this());
-        header.initialize(body);
-        boost::asio::async_write(*socket,
-                                 boost::asio::buffer(header.data(), header.headerLen()),
+        header_.initialize(body_);
+        boost::asio::async_write(*socket_,
+                                 boost::asio::buffer(header_.data(), Header::headerLen()),
                                  std::bind(&Writer::onWriteHeaderFinished, self, std::placeholders::_1, std::placeholders::_2));
     }
 
-    void onWriteHeaderFinished(boost::system::error_code ec, size_t len)
+    void onWriteHeaderFinished(boost::system::error_code err_code, size_t len)
     {
-        if(ec.failed())
+        if(err_code.failed())
         {
-            write_in_progress = true;
-            if(onNetworkFailed)
-                onNetworkFailed(ec, len);
-            else
+            write_in_progress_ = true;
+            if(on_network_failed_) {
+                on_network_failed_(err_code, len);
+            } else {
                 throw std::runtime_error("tea::asiocommunicator::Reader::onWriteHeaderFinished: async_write returned non-zero code");
+            }
         } else {
             doWriteBody();
         }
@@ -243,7 +240,7 @@ private:
     void onReadHeaderFinished(boost::system::error_code ec, size_t len)
     {
         error_code = ec;
-        if(header.code != Header::headerCodeBegin)
+        if(header.code != Header::header_code_begin)
             throw std::runtime_error("tea::asiocommunicator::Reader::onReadHeaderFinished: unexpected value, can't parse message header");
         if(ec.failed())
         {
@@ -888,7 +885,6 @@ public:
     }
 };
 
-} /* namespace asiocommunicator */
-} /* namespace tea */
+} /* namespace tea::asiocommunicator */
 
 #endif // ASIOCOMMUNICATOR_H

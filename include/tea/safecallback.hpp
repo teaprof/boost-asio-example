@@ -26,6 +26,11 @@
 #include<memory>
 #include<functional>
 
+namespace tea {
+
+namespace asiocommunicator {
+
+
 template<typename Function> struct SafeCallback;
 template<typename Function> struct CallbackProtector;
 
@@ -82,5 +87,7 @@ public:
     }
 };
 
+} /* namespace asiocommunicator */
+} /* namespace tea */
 
 #endif // SAFECALLBACK_HPP
