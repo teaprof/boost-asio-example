@@ -33,7 +33,6 @@
 #include <functional>
 #include <iostream>
 #include <optional>
-#include <thread>
 
 namespace tea {
 
