@@ -37,7 +37,7 @@
 namespace tea::asiocommunicator {
 
 using byte = uint8_t;
-using Buffer = std::vector<byte>;
+using   Buffer = std::vector<byte>;
 
 using port_t = uint16_t;
 static_assert(sizeof(port_t) >= 2, "size of port_t should be atleat 2 bytes");
@@ -67,9 +67,8 @@ struct Header final
     }
 };
 
-
 //Declare types for various callback functions
-using onReadFinishedT = void(Header&&, Buffer&&);
+using onReadFinishedT = void(Header&, Buffer&&);
 using onWriteFinishedT = void(Buffer&&);
 using onNetworkFailedT =void(boost::system::error_code&, size_t len);
 using onAcceptedT = void(boost::asio::ip::tcp::socket&&);
@@ -178,21 +177,22 @@ private:
     void doWriteBody()
     {        
         auto self(shared_from_this());
-        boost::asio::async_write(*socket, boost::asio::buffer(body.data(), body.size()),
+        boost::asio::async_write(*socket_, boost::asio::buffer(body_.data(), body_.size()),
                                  std::bind(&Writer::onWriteBodyFinished, self, std::placeholders::_1, std::placeholders::_2));
     }
 
-    void onWriteBodyFinished(boost::system::error_code ec, size_t len)
+    void onWriteBodyFinished(boost::system::error_code ecode, size_t len)
     {
-        write_in_progress = false;
-        if(ec.failed())
+        write_in_progress_ = false;
+        if(ecode.failed())
         {
-            if(onNetworkFailed)
-                onNetworkFailed(ec, len);
-            else
+            if(on_network_failed_) {
+                on_network_failed_(ecode, len);
+            } else {
                 throw std::runtime_error("tea::asiocommunicator::Reader::onWriteHeaderFinished: async_write returned non-zero code");
+            }
         } else {
-            onWriteFinished(std::move(body));
+            on_write_finished_(std::move(body_));
         }
     }
 };
@@ -203,28 +203,28 @@ class Reader: public AsyncOperationWaiter<Reader>
 public:
     void setSocket(std::shared_ptr<boost::asio::ip::tcp::socket> sock)
     {
-        socket = sock;
+        socket_ = std::move(sock);
     }
     void startReadAsync()
     {
-        assert(read_in_progress == false);
+        assert(read_in_progress_ == false);
         doReadHeader();
     }
-    boost::system::error_code errorCode() { return error_code; }
-    bool readInProgress() {return read_in_progress; }
+    boost::system::error_code errorCode() { return error_code_; }
+    bool readInProgress() const {return read_in_progress_; }
     void close() {}
 private:
-    Reader(std::shared_ptr<boost::asio::ip::tcp::socket> socket_, std::function<onReadFinishedT> onReadFinished_, std::function<onNetworkFailedT> onNetworkFailed_) :
-        onReadFinished(onReadFinished_), onNetworkFailed(onNetworkFailed_), socket(socket_) {}
+    Reader(std::shared_ptr<boost::asio::ip::tcp::socket> socket, std::function<onReadFinishedT> on_read_finished, std::function<onNetworkFailedT> on_network_failed) :
+        on_read_finished_(std::move(on_read_finished)), on_network_failed_(std::move(on_network_failed)), socket_(std::move(socket)) {}
 
 
-    bool read_in_progress = false;
-    boost::system::error_code error_code;
-    std::function<onReadFinishedT> onReadFinished;
-    std::function<onNetworkFailedT> onNetworkFailed;
-    Header header;
-    Buffer body;
-    std::shared_ptr<boost::asio::ip::tcp::socket> socket;
+    bool read_in_progress_ = false;
+    boost::system::error_code error_code_;
+    std::function<onReadFinishedT> on_read_finished_;
+    std::function<onNetworkFailedT> on_network_failed_;
+    Header header_;
+    Buffer body_;
+    std::shared_ptr<boost::asio::ip::tcp::socket> socket_;
 
 
     void doReadHeader()
@@ -232,23 +232,25 @@ private:
         //at least one shared_ptr to 'this' pointer in your program should exists
         //before this line, otherwise bad_weak_ptr exception will be thrown
         auto self(shared_from_this());
-        read_in_progress = true;
+        read_in_progress_ = true;
 
-        boost::asio::async_read(*socket, boost::asio::buffer(header.data(), header.headerLen()),
+        boost::asio::async_read(*socket_, boost::asio::buffer(header_.data(), Header::headerLen()),
                                 std::bind(&Reader::onReadHeaderFinished, self, std::placeholders::_1, std::placeholders::_2));
     }
-    void onReadHeaderFinished(boost::system::error_code ec, size_t len)
+    void onReadHeaderFinished(boost::system::error_code ecode, size_t len)
     {
-        error_code = ec;
-        if(header.code != Header::header_code_begin)
+        error_code_ = ecode;
+        if(header_.code != Header::header_code_begin) {
             throw std::runtime_error("tea::asiocommunicator::Reader::onReadHeaderFinished: unexpected value, can't parse message header");
-        if(ec.failed())
+        }
+        if(ecode.failed())
         {
-            read_in_progress = false;
-            if(onNetworkFailed)
-                onNetworkFailed(ec, len);
-            else
+            read_in_progress_ = false;
+            if(on_network_failed_) {
+                on_network_failed_(ecode, len);
+            } else {
                 throw std::runtime_error("tea::asiocommunicator::Reader::onReadHeaderFinished: async_read returned non-zero code");
+            }
         } else {
             doReadBody();
         }
@@ -257,24 +259,26 @@ private:
     void doReadBody()
     {
         auto self(shared_from_this());        
-        body.resize(header.msglen);
-        boost::asio::async_read(*socket, boost::asio::buffer(body.data(), body.size()),
+        body_.resize(header_.msglen);
+        boost::asio::async_read(*socket_, boost::asio::buffer(body_.data(), body_.size()),
                                 std::bind(&Reader::onReadBodyFinished, self, std::placeholders::_1, std::placeholders::_2));
     }
 
-    void onReadBodyFinished(boost::system::error_code ec, size_t len)
+    void onReadBodyFinished(boost::system::error_code ecode, size_t len)
     {
-        read_in_progress = false;
-        error_code = ec;
-        if(ec.failed())
+        read_in_progress_ = false;
+        error_code_ = ecode;
+        if(ecode.failed())
         {
-            if(onNetworkFailed)
-                onNetworkFailed(ec, len);
-            else
+            if(on_network_failed_) {
+                on_network_failed_(ecode, len);
+            } else {
                 throw std::runtime_error("tea::asiocommunicator::Reader::onReadHeaderFinished: async_read returned non-zero code");
+            }
         } else {
-            if(onReadFinished)
-                onReadFinished(std::move(header), std::move(body));
+            if(on_read_finished_) {
+                on_read_finished_(header_, std::move(body_));
+            }
         }
     }
 };
@@ -294,23 +298,30 @@ public:
         allocNewBuffers, collectAndUsePreallocatedBuffers
     };
 
-    ASIOBufferedTalker(std::shared_ptr<boost::asio::ip::tcp::socket> socket_) :
-        onReadFinishedSafe(&ASIOBufferedTalker::onReadFinished, this),
-        onWriteFinishedSafe(&ASIOBufferedTalker::onWriteFinished, this),
-        onNetworkFailedSafe(&ASIOBufferedTalker::onNetworkFailed, this),
-        socket(socket_),
-        writer(Writer::create_shared_ptr(socket, onWriteFinishedSafe, onNetworkFailedSafe)), //todo: socket could be destroyed before Writer (or Reader) destoroyed
-        reader(Reader::create_shared_ptr(socket, onReadFinishedSafe, onNetworkFailedSafe))
+    explicit ASIOBufferedTalker(std::shared_ptr<boost::asio::ip::tcp::socket> socket):
+        on_read_finished_safe_(&ASIOBufferedTalker::onReadFinished, this),
+        on_write_finished_safe_(&ASIOBufferedTalker::onWriteFinished, this),
+        on_network_failed_safe_(&ASIOBufferedTalker::onNetworkFailed, this),
+        socket_(std::move(socket)),
+        writer_(Writer::create_shared_ptr(socket_, on_write_finished_safe_, on_network_failed_safe_)), //todo: socket could be destroyed before Writer (or Reader) destoroyed
+        reader_(Reader::create_shared_ptr(socket_, on_read_finished_safe_, on_network_failed_safe_))
         { }
 
-    ASIOBufferedTalker(boost::asio::io_context &context) :
-        onReadFinishedSafe(&ASIOBufferedTalker::onReadFinished, this),
-        onWriteFinishedSafe(&ASIOBufferedTalker::onWriteFinished, this),
-        onNetworkFailedSafe(&ASIOBufferedTalker::onNetworkFailed, this),
-        socket(std::make_shared<boost::asio::ip::tcp::socket>(context)),
-        writer(Writer::create_shared_ptr(socket, onWriteFinishedSafe, onNetworkFailedSafe)),
-        reader(Reader::create_shared_ptr(socket, onReadFinishedSafe, onNetworkFailedSafe))
+    explicit ASIOBufferedTalker(boost::asio::io_context &context):
+        on_read_finished_safe_(&ASIOBufferedTalker::onReadFinished, this),
+        on_write_finished_safe_(&ASIOBufferedTalker::onWriteFinished, this),
+        on_network_failed_safe_(&ASIOBufferedTalker::onNetworkFailed, this),
+        socket_(std::make_shared<boost::asio::ip::tcp::socket>(context)),
+        writer_(Writer::create_shared_ptr(socket_, on_write_finished_safe_, on_network_failed_safe_)),
+        reader_(Reader::create_shared_ptr(socket_, on_read_finished_safe_, on_network_failed_safe_))
         { }
+
+    ~ASIOBufferedTalker() = default;
+    ASIOBufferedTalker(const ASIOBufferedTalker&) = delete;
+    ASIOBufferedTalker(ASIOBufferedTalker&&) = delete;
+    ASIOBufferedTalker& operator=(const ASIOBufferedTalker&) = delete;
+    void operator=(ASIOBufferedTalker&&) = delete;
+    
 
 
     //What should we do if move or copy constructor is called when async operation in progress?
@@ -321,15 +332,11 @@ public:
     //Abandon it? Or redirect callback to a new object (there is no way to do this in the current project)?
     //2. If copy constructor is called when an async operation in progress, what should we do with
     //this operation callbacks? How to copy the pending async operation to a new object?
-    ASIOBufferedTalker(const ASIOBufferedTalker&) = delete;
-    ASIOBufferedTalker(ASIOBufferedTalker&&) = delete;
-
-    ~ASIOBufferedTalker() {}
 
     void start()
     {
-        reader->startReadAsync();
-        status = Status::working;
+        reader_->startReadAsync();
+        status_ = Status::working;
     }
 
     void send(const Buffer& buf)
@@ -339,13 +346,13 @@ public:
     }
     void send(Buffer&& buf)
     {
-        if(writer->writeInProgress())
+        if(writer_->writeInProgress())
         {
-            writeQueue.push(buf);
+            write_queue_.push(buf);
         } else {
-            if(writeQueue.empty())
+            if(write_queue_.empty())
             {
-                writer->send(std::move(buf));
+                writer_->send(std::move(buf));
             } else {
                 writeFromBuffer();
             }
@@ -354,43 +361,44 @@ public:
 
     bool receive(Buffer& buf)
     {
-        if(readQueue.empty())
+        if(read_queue_.empty()) {
             return false;
-        buf = std::move(readQueue.front());
-        readQueue.pop();
+        }
+        buf = std::move(read_queue_.front());
+        read_queue_.pop();
         return true;
     }
 
     void close()
     {
-        reader->close();
-        writer->close();
-        status = Status::closed;
+        reader_->close();
+        writer_->close();
+        status_ = Status::closed;
     }
 
     //Status tracking routines:
-    Status getStatus() const { return status; }
+    [[nodiscard]] Status getStatus() const { return status_; }
 
-    void setSocket(std::shared_ptr<boost::asio::ip::tcp::socket> sock)
+    void setSocket(std::shared_ptr<boost::asio::ip::tcp::socket> socket)
     {
-        socket = sock;
-        reader->setSocket(socket);
-        writer->setSocket(socket);
+        socket_ = std::move(socket);
+        reader_->setSocket(socket_);
+        writer_->setSocket(socket_);
     }
 
-    bool isFinished() const
+    [[nodiscard]] bool isFinished() const
     {
-        return status == Status::closed || status == Status::failed;
+        return status_ == Status::closed || status_ == Status::failed;
     }
-    bool isActive() const
+    [[nodiscard]] bool isActive() const
     {
-        return status == Status::working;
+        return status_ == Status::working;
     }
 private:
-    void onReadFinished([[maybe_unused]] Header&& header, Buffer&& buf)
+    void onReadFinished([[maybe_unused]] Header& header, Buffer&& buf)
     {
-       readQueue.emplace(std::move(buf));
-       reader->startReadAsync();
+       read_queue_.emplace(std::move(buf));
+       reader_->startReadAsync();
     }
     void onWriteFinished([[maybe_unused]] Buffer&& buf)
     {
@@ -398,53 +406,64 @@ private:
     }
     void writeFromBuffer()
     {
-       if(writeQueue.empty())
+       if(write_queue_.empty()) {
            return;
-       Buffer msg(std::move(writeQueue.front()));
-       writeQueue.pop();
-       writer->send(std::move(msg));
+       }
+       Buffer msg(std::move(write_queue_.front()));
+       write_queue_.pop();
+       writer_->send(std::move(msg));
     }
-    void onNetworkFailed(boost::system::error_code& ec, [[maybe_unused]] size_t len)
+    void onNetworkFailed(boost::system::error_code& ecode, [[maybe_unused]] size_t len)
     {
-       std::cout<<"ASIOtalker: "<<ec.message()<<std::endl;
+       std::cout<<"ASIOtalker: "<<ecode.message()<<std::endl;
        close();
-       status = Status::failed;
+       status_ = Status::failed;
     }
-    CallbackProtector<decltype(&ASIOBufferedTalker::onReadFinished)> onReadFinishedSafe;
-    CallbackProtector<decltype(&ASIOBufferedTalker::onWriteFinished)> onWriteFinishedSafe;
-    CallbackProtector<decltype(&ASIOBufferedTalker::onNetworkFailed)> onNetworkFailedSafe;
+    CallbackProtector<decltype(&ASIOBufferedTalker::onReadFinished)> on_read_finished_safe_;
+    CallbackProtector<decltype(&ASIOBufferedTalker::onWriteFinished)> on_write_finished_safe_;
+    CallbackProtector<decltype(&ASIOBufferedTalker::onNetworkFailed)> on_network_failed_safe_;
 
-    std::shared_ptr<boost::asio::ip::tcp::socket> socket;
-    std::shared_ptr<Writer> writer;
-    std::shared_ptr<Reader> reader;
-    Status status = Status::notStarted;
-    std::queue<Buffer> readQueue;
-    std::queue<Buffer> writeQueue;
+    std::shared_ptr<boost::asio::ip::tcp::socket> socket_;
+    std::shared_ptr<Writer> writer_;
+    std::shared_ptr<Reader> reader_;
+    Status status_ = Status::notStarted;
+    std::queue<Buffer> read_queue_;
+    std::queue<Buffer> write_queue_;
 };
 
-class ASIOacceptor : public AsyncOperationWaiter<ASIOacceptor>
+class ASIOAcceptor : public AsyncOperationWaiter<ASIOAcceptor>
 {
-    friend class AsyncOperationWaiter<ASIOacceptor>;
+    friend class AsyncOperationWaiter<ASIOAcceptor>;
 public:
-    ~ASIOacceptor()
+    ASIOAcceptor() = delete;
+    ASIOAcceptor(const ASIOAcceptor&) = delete;
+    ASIOAcceptor(ASIOAcceptor&&) = delete;
+    ASIOAcceptor operator=(const ASIOAcceptor&) = delete;
+    ASIOAcceptor operator=(ASIOAcceptor&&) = delete;
+
+    ~ASIOAcceptor()
     {
-        acceptor.close();
+        try {
+            acceptor_.close();
+        } catch (...) {
+            //nothing to do
+        }
     }
 
     void start_accept(port_t port)
     //This function can be used to stop current acceptor operation and start accepting on a new port
     {
         //First, we should to close current operation
-        acceptor.close();
+        acceptor_.close();
         //Then we have two alternatives:
         //Alternative 1: create new acceptor object (acceptor constructor will call open, bind and listen by itself), like in the following code
         //acceptor = std::move(boost::asio::ip::tcp::acceptor(context, boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), mport)));
         //
         //Alternative 2: create new endpoint object like in the following code
-        boost::asio::ip::tcp::endpoint endpoint(boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), port));
-        acceptor.open(endpoint.protocol());
-        acceptor.bind(endpoint);
-        acceptor.listen();
+        const boost::asio::ip::tcp::endpoint endpoint(boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), port));
+        acceptor_.open(endpoint.protocol());
+        acceptor_.bind(endpoint);
+        acceptor_.listen();
         doAccept();
     }
     void start_accept()
@@ -452,49 +471,51 @@ public:
         doAccept();
     }
 
-    bool acceptInProgress() { return acceptInProgress_;}
+    bool acceptInProgress() const { return accept_in_progress_;}
 private:
-    ASIOacceptor(boost::asio::io_context& context_, port_t port,
-                 std::function<onAcceptedT> onNewConnection_,
-                 std::function<onAcceptFailedT> onAcceptFailed_)
-        : onNewConnection(onNewConnection_),
-        onAcceptFailed(onAcceptFailed_),
-        context(context_), acceptor(context_, boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), port)) {}
+    ASIOAcceptor(boost::asio::io_context& context, port_t port,
+                 std::function<onAcceptedT> on_new_connection,
+                 std::function<onAcceptFailedT> on_accept_failed)
+        : on_new_connection_(std::move(on_new_connection)),
+        on_accept_failed_(std::move(on_accept_failed)),
+        context_(context), acceptor_(context_, boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), port)) {}
 
     void doAccept()
     {
-        if(acceptInProgress_)
+        if(accept_in_progress_) {
            return;
-        acceptInProgress_ = true;
+        }
+        accept_in_progress_ = true;
         auto self(shared_from_this());
-        msocket = std::make_shared<boost::asio::ip::tcp::socket>(context);
+        msocket_ = std::make_shared<boost::asio::ip::tcp::socket>(context_);
         //endpoint = boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), mport);
-        acceptor.async_accept(*msocket, std::bind(&ASIOacceptor::onAcceptNewConnection, self, std::placeholders::_1)); //, std::placeholders::_2));
+        acceptor_.async_accept(*msocket_, std::bind(&ASIOAcceptor::onAcceptNewConnection, self, std::placeholders::_1)); //, std::placeholders::_2));
     }
 
-    void onAcceptNewConnection(const boost::system::error_code& ec) //, boost::asio::ip::tcp::socket socket)
+    void onAcceptNewConnection(const boost::system::error_code& ecode) //, boost::asio::ip::tcp::socket socket)
     {
-        acceptInProgress_ = false;
-        if(ec.failed())
+        accept_in_progress_ = false;
+        if(ecode.failed())
         {
-            if(onAcceptFailed)
-                onAcceptFailed(ec);
-            else
+            if(on_accept_failed_) {
+                on_accept_failed_(ecode);
+            } else {
                 throw std::runtime_error("tea::asiocommunicator::ASIOacceptor::onAcceptNewConnection: async_accept returned non-zero code");
+            }
         } else {
-            onNewConnection(std::move(*msocket));
-            msocket = nullptr;
+            on_new_connection_(std::move(*msocket_));
+            msocket_ = nullptr;
             doAccept();
         }
     }
 
-    std::shared_ptr<boost::asio::ip::tcp::socket> msocket;
+    std::shared_ptr<boost::asio::ip::tcp::socket> msocket_;
 
-    std::function<void(boost::asio::ip::tcp::socket&&)> onNewConnection;
-    std::function<void(const boost::system::error_code& ec)> onAcceptFailed;
-    boost::asio::io_context& context;
-    boost::asio::ip::tcp::acceptor acceptor;
-    bool acceptInProgress_{false};    
+    std::function<void(boost::asio::ip::tcp::socket&&)> on_new_connection_;
+    std::function<void(const boost::system::error_code& ecode)> on_accept_failed_;
+    boost::asio::io_context& context_;
+    boost::asio::ip::tcp::acceptor acceptor_;
+    bool accept_in_progress_{false};
 };
 
 class ASIOresolver : public AsyncOperationWaiter<ASIOresolver>
@@ -508,32 +529,32 @@ public:
     }
 private:
 
-    ASIOresolver(boost::asio::io_context& io_context, std::function<onResolvedT> onResolved_, std::function<onResolveFailedT> onResolveFailed_)
-        : onResolved(onResolved_), onResolveFailed(onResolveFailed_), resolver(io_context)
+    ASIOresolver(boost::asio::io_context& io_context, std::function<onResolvedT> on_resolved, std::function<onResolveFailedT> on_resolve_failed)
+        : on_resolved_(std::move(on_resolved)), on_resolve_failed_(std::move(on_resolve_failed)), resolver_(io_context)
     { }
 
     void doResolve(const std::string& address, const std::string& port)
     {
         auto self(shared_from_this());
-        resolver.async_resolve(address, port, std::bind(&ASIOresolver::onResolveFinished, self, std::placeholders::_1, std::placeholders::_2));
+        resolver_.async_resolve(address, port, std::bind(&ASIOresolver::onResolveFinished, self, std::placeholders::_1, std::placeholders::_2));
     }
-    void onResolveFinished(const boost::system::error_code& ec, boost::asio::ip::tcp::resolver::results_type results)
+    void onResolveFinished(const boost::system::error_code& ecode, const boost::asio::ip::tcp::resolver::results_type& results)
     {
-        if(ec.failed())
+        if(ecode.failed())
         {
-            if(onResolveFailed)
+            if(on_resolve_failed_)
             {
-                onResolveFailed(ec);
+                on_resolve_failed_(ecode);
             } else {
-                throw std::runtime_error(std::string("Can't resolve host, error = ") + ec.message());
+                throw std::runtime_error(std::string("Can't resolve host, error = ") + ecode.message());
             }
         } else {
-            onResolved(results);
+            on_resolved_(results);
         }
     }
-    std::function<onResolvedT> onResolved;
-    std::function<onResolveFailedT> onResolveFailed;
-    boost::asio::ip::tcp::resolver resolver;
+    std::function<onResolvedT> on_resolved_;
+    std::function<onResolveFailedT> on_resolve_failed_;
+    boost::asio::ip::tcp::resolver resolver_;
 };
 
 class ASIOconnecter : public AsyncOperationWaiter<ASIOconnecter>
@@ -542,173 +563,185 @@ class ASIOconnecter : public AsyncOperationWaiter<ASIOconnecter>
 public:
     void connect(const boost::asio::ip::tcp::resolver::results_type& endpoints)
     {
-        mendpoints = endpoints;
+        end_points_ = endpoints;
         doConnect();
     }
     std::shared_ptr<boost::asio::ip::tcp::socket> socket()
     {
-        return msocket;
+        return msocket_;
     }
 private:
-    ASIOconnecter(boost::asio::io_context& context_, std::function<onConnectedT> onConnected_, std::function<onConnectFailedT> onConnectFailed_)
-        : context(context_), msocket(std::make_shared<boost::asio::ip::tcp::socket>(context_)),
-        onConnected(onConnected_), onConnectFailed(onConnectFailed_) {}
+    ASIOconnecter(boost::asio::io_context& context, std::function<onConnectedT> on_connected, std::function<onConnectFailedT> on_connect_failed)
+        : context_(context), msocket_(std::make_shared<boost::asio::ip::tcp::socket>(context)),
+        on_connected_(std::move(on_connected)), on_connect_failed_(std::move(on_connect_failed)) {}
 
     void doConnect()
     {
         auto self(shared_from_this());
-        msocket = std::make_shared<boost::asio::ip::tcp::socket>(context);
-        boost::asio::async_connect(*msocket, mendpoints, std::bind(&ASIOconnecter::onConnectFinished, self, std::placeholders::_1, std::placeholders::_2));
+        msocket_ = std::make_shared<boost::asio::ip::tcp::socket>(context_);
+        boost::asio::async_connect(*msocket_, end_points_, std::bind(&ASIOconnecter::onConnectFinished, self, std::placeholders::_1, std::placeholders::_2));
     }
 
-    void onConnectFinished(const boost::system::error_code &ec, const typename boost::asio::ip::tcp::endpoint &ep)
+    void onConnectFinished(const boost::system::error_code &ecode, const typename boost::asio::ip::tcp::endpoint &ep)
     {        
-        if(ec.failed())
+        if(ecode.failed())
         {
-            if(onConnectFailed)
-                onConnectFailed(ec);
-            else
-                throw std::runtime_error(std::string("Can't connect to host, error = ") + ec.message());
+            if(on_connect_failed_) {
+                on_connect_failed_(ecode);
+            } else {
+                throw std::runtime_error(std::string("Can't connect to host, error = ") + ecode.message());
+            }
         } else {
-            onConnected(ep);
+            on_connected_(ep);
         }
     }
 
-    boost::asio::ip::tcp::resolver::results_type mendpoints;
-    boost::asio::io_context& context;
-    std::shared_ptr<boost::asio::ip::tcp::socket> msocket;
-    std::function<onConnectedT> onConnected;
-    std::function<onConnectFailedT> onConnectFailed;
+    boost::asio::ip::tcp::resolver::results_type end_points_;
+    boost::asio::io_context& context_;
+    std::shared_ptr<boost::asio::ip::tcp::socket> msocket_;
+    std::function<onConnectedT> on_connected_;
+    std::function<onConnectFailedT> on_connect_failed_;
 };
 
-class ASIOserver
+class ASIOServer
 {
 public:
     using error_code = boost::system::error_code;
 
-    ASIOserver(const ASIOserver&) = delete;
-    ASIOserver(boost::asio::io_context &context_ = GetContext::get()):
-        mcontext(context_),
-        onAcceptedSafe(&ASIOserver::onAccepted, this),
-        onAcceptFailedSafe(&ASIOserver::onAcceptFailed, this)
+    explicit ASIOServer(boost::asio::io_context &context = GetContext::get()):
+        context_(context),
+        on_accepted_safe_(&ASIOServer::onAccepted, this),
+        on_accept_failed_safe_(&ASIOServer::onAcceptFailed, this)
     { }
-    virtual ~ASIOserver() {}
+    virtual ~ASIOServer() = default;
+
+    ASIOServer(const ASIOServer&) = delete;
+    ASIOServer(ASIOServer&&) = delete;
+    ASIOServer& operator=(const ASIOServer&) = delete;
+    void operator=(ASIOServer&&) = delete;
 
     enum class Status {notStarted, Listening, notListening, closed, terminated};
 
     void startAccept(port_t port)
     {
-        acceptor = ASIOacceptor::create_shared_ptr(mcontext, port, onAcceptedSafe, onAcceptFailedSafe);
-        acceptor->start_accept();
+        acceptor_ = ASIOAcceptor::create_shared_ptr(context_, port, on_accepted_safe_, on_accept_failed_safe_);
+        acceptor_->start_accept();
     }
 
-    void send(size_t sessionID, const Buffer& msg)
+    void send(size_t session_id, const Buffer& msg)
     {
-        sessions.at(sessionID).send(msg);
+        sessions_.at(session_id).send(msg);
     }
 
-    void send(size_t sessionID, Buffer&& msg)
+    void send(size_t session_id, Buffer&& msg)
     {
-        sessions.at(sessionID).send(std::move(msg));
+        sessions_.at(session_id).send(std::move(msg));
     }
 
-    bool receiveAnySession(size_t &sessionID, Buffer& buf)
+    bool receiveAnySession(size_t &session_id, Buffer& buf)
     {
-        for(auto& [session, talker]: sessions)
+        for(auto& [session, talker]: sessions_)
         {
             if(talker.receive(buf))
             {
-                sessionID = session;
+                session_id = session;
                 return true;
             }
         }
         return false;
     }
-    bool receiveBySessionID(size_t sessionID, Buffer& buf)
+    bool receiveBySession_id(size_t session_id, Buffer& buf)
     {
-        return sessions.at(sessionID).receive(buf);
+        return sessions_.at(session_id).receive(buf);
     }
     std::vector<size_t> getActiveSessions()
     {
         std::vector<size_t> activeSessions;
-        activeSessions.reserve(sessions.size());
-        for(const auto &it : sessions)
+        activeSessions.reserve(sessions_.size());
+        for(const auto &it : sessions_) {
             activeSessions.push_back(it.first);
+        }
         return activeSessions;
     }
     std::vector<size_t> getNewSessions()
     {
-        std::vector<size_t> res(std::move(newSessions));
-        newSessions.clear();
+        std::vector<size_t> res(std::move(new_sessions_));
+        new_sessions_.clear();
         return res;
     }
-    size_t getActiveSessionsCount() const
+    [[nodiscard]] size_t getActiveSessionsCount() const
     {
         size_t count = 0;
-        for(const auto &it : sessions)
-            if(it.second.isActive())
+        for(const auto &it : sessions_) {
+            if(it.second.isActive()) {
                 count++;
+            }
+        }
         return count;
     }
     void close()
     {
-        for(auto &it : sessions)
+        for(auto &it : sessions_) {
             it.second.close();
-        sessions.clear();
+        }
+        sessions_.clear();
     }
-    void close(size_t sessionID)
+    void close(size_t session_id)
     {
-        auto it = sessions.find(sessionID); //we assume that such element exists
+        auto it = sessions_.find(session_id); //we assume that such element exists
         it->second.close();
-        sessions.erase(it);
+        sessions_.erase(it);
     }
     void poll()
     {
-        mcontext.poll();
+        context_.poll();
     }
 
     void removeFinishedSessions()
     {
         std::vector<size_t> sessionsToDel;
-        for(const auto &it : sessions)
-            if(it.second.getStatus() > ASIOBufferedTalker::Status::working)
+        for(const auto &it : sessions_) {
+            if(it.second.getStatus() > ASIOBufferedTalker::Status::working) {
                 sessionsToDel.push_back(it.first);
-        for(const size_t session : sessionsToDel)
-            sessions.erase(session);
+            }
+        }
+        for(const size_t session : sessionsToDel) {
+            sessions_.erase(session);
+        }
     }
 
 private:
-    std::vector<size_t> newSessions;    
+    std::vector<size_t> new_sessions_;
 
-    size_t sessionCounter{0};
+    size_t session_counter_{0};
 
 
 
     void onAccepted(boost::asio::ip::tcp::socket &&socket)
     {
         std::cout<<"Accepted connection"<<std::endl;
-        sessions.emplace(sessionCounter, std::make_shared<boost::asio::ip::tcp::socket>(std::move(socket)));
-        newSessions.push_back(sessionCounter);
-        sessions.at(sessionCounter).start();
-        sessionCounter++;
+        sessions_.emplace(session_counter_, std::make_shared<boost::asio::ip::tcp::socket>(std::move(socket)));
+        new_sessions_.push_back(session_counter_);
+        sessions_.at(session_counter_).start();
+        session_counter_++;
 
     }
-    void onAcceptFailed(const boost::system::error_code& ec)
+    void onAcceptFailed(const boost::system::error_code& ecode) // NOLINT
     {
-        std::cout<<ec.message()<<std::endl;
+        std::cout<<ecode.message()<<std::endl;
     }
 
-    boost::asio::io_context& mcontext;
+    boost::asio::io_context& context_;
 
-    CallbackProtector<decltype(&ASIOserver::onAccepted)> onAcceptedSafe;
-    CallbackProtector<decltype(&ASIOserver::onAcceptFailed)> onAcceptFailedSafe;    
+    CallbackProtector<decltype(&ASIOServer::onAccepted)> on_accepted_safe_;
+    CallbackProtector<decltype(&ASIOServer::onAcceptFailed)> on_accept_failed_safe_; 
 
-    std::map<size_t, ASIOBufferedTalker> sessions;
-    std::shared_ptr<ASIOacceptor> acceptor;
+    std::map<size_t, ASIOBufferedTalker> sessions_;
+    std::shared_ptr<ASIOAcceptor> acceptor_;
 
 };
 
-class ASIOclient
+class ASIOClient
 {
 public:
     enum class Status
@@ -717,93 +750,99 @@ public:
         resolvingFailed, connectingFailed
     };
 
-    ASIOclient(boost::asio::io_context &context = GetContext::get()) :
-        status(Status::notinitialized),
-        mcontext(context),
-        onResolvedSafe(&ASIOclient::onResolved, this), onResolveFailedSafe(&ASIOclient::onResolveFailed, this),
-        onConnectedSafe(&ASIOclient::onConnected, this), onConnectFailedSafe(&ASIOclient::onConnectFailed, this),
-        resolver(ASIOresolver::create_shared_ptr(context, onResolvedSafe, onResolveFailedSafe)),
-        connecter(ASIOconnecter::create_shared_ptr(context, onConnectedSafe, onConnectFailedSafe)),
-        talker(context) { }
+    explicit ASIOClient(boost::asio::io_context &context = GetContext::get()) :
+        context_(context),
+        on_resolved_safe_(&ASIOClient::onResolved, this), on_resolve_failed_safe_(&ASIOClient::onResolveFailed, this),
+        on_connected_safe_(&ASIOClient::onConnected, this), on_connect_failed_safe_(&ASIOClient::onConnectFailed, this),
+        resolver_(ASIOresolver::create_shared_ptr(context, on_resolved_safe_, on_resolve_failed_safe_)),
+        connecter_(ASIOconnecter::create_shared_ptr(context, on_connected_safe_, on_connect_failed_safe_)),
+        talker_(context) { }
+
+    ASIOClient(const ASIOClient&) = delete;
+    ASIOClient(ASIOClient&&) = delete;
+    ASIOClient& operator=(const ASIOClient&) = delete;
+    void operator=(ASIOClient&&) = delete;
+    ~ASIOClient() = default;
 
     void connect(const std::string &address, uint16_t port)
     {
-        mport = port;
-        maddress = address;        
+        port_ = port;
+        address_ = address;        
         doResolveAndConnect();
     }
 
     void sync_connect(const std::string &address, uint16_t port)
     {
         connect(address, port);
-        while(status >= Status::notinitialized && status <= Status::connecting)
+        while(status_ >= Status::notinitialized && status_ <= Status::connecting) {
             poll();
+        }
     }
 
     void send(const Buffer& msg)
     {
-        talker.send(msg);
+        talker_.send(msg);
     }
 
     void send(Buffer&& msg)
     {
-        talker.send(std::move(msg));
+        talker_.send(std::move(msg));
     }
 
     bool receive(Buffer& buf)
     {
-        return talker.receive(buf);
+        return talker_.receive(buf);
     }
 
-    void close() { talker.close(); }
-    void poll() { mcontext.poll(); }
+    void close() { talker_.close(); }
+    void poll() { context_.poll(); }
 
-    Status getStatus() { return status; }
+    Status getStatus() { return status_; }
 private:
-    Status status;
+    Status status_{Status::notinitialized};
 
     void updateStatus();
-    boost::asio::io_context &mcontext;
-    uint16_t mport;
-    std::string maddress;
+    boost::asio::io_context &context_;
+    uint16_t port_{8082}; // NOLINT magic number
+    std::string address_;
 
     void doResolveAndConnect()
     {
-        status = Status::notinitialized;
-        resolver->resolve(maddress, std::to_string(mport));
+        status_ = Status::notinitialized;
+        resolver_->resolve(address_, std::to_string(port_));
     }
 
     void onResolved(const boost::asio::ip::tcp::resolver::results_type& endpoints)
     {
-        status = Status::connecting;
-        connecter->connect(endpoints);
+        status_ = Status::connecting;
+        connecter_->connect(endpoints);
     }
 
-    void onResolveFailed([[maybe_unused]] const boost::system::error_code &ec)
+    void onResolveFailed([[maybe_unused]] const boost::system::error_code &ecode)
     {
-        status = Status::resolvingFailed;
+        status_ = Status::resolvingFailed;
     }
 
     void onConnected([[maybe_unused]] const typename boost::asio::ip::tcp::endpoint &ep)
     {
-        auto s = connecter->socket();
-        status = Status::connectedOk;
-        talker.setSocket(s);
-        talker.start();
+        auto s = connecter_->socket();
+        status_ = Status::connectedOk;
+        talker_.setSocket(s);
+        talker_.start();
     }
-    void onConnectFailed([[maybe_unused]] const boost::system::error_code &ec)
+    void onConnectFailed([[maybe_unused]] const boost::system::error_code &ecode)
     {
-        std::cout<<"Connect failed: "<<ec.message()<<std::endl;
-        status = Status::connectingFailed;
+        std::cout<<"Connect failed: "<<ecode.message()<<std::endl;
+        status_ = Status::connectingFailed;
     }
 
-    CallbackProtector<decltype(&ASIOclient::onResolved)> onResolvedSafe;
-    CallbackProtector<decltype(&ASIOclient::onResolveFailed)> onResolveFailedSafe;
-    CallbackProtector<decltype(&ASIOclient::onConnected)> onConnectedSafe;
-    CallbackProtector<decltype(&ASIOclient::onConnectFailed)> onConnectFailedSafe;
-    std::shared_ptr<ASIOresolver> resolver;
-    std::shared_ptr<ASIOconnecter> connecter;
-    ASIOBufferedTalker talker;
+    CallbackProtector<decltype(&ASIOClient::onResolved)> on_resolved_safe_;
+    CallbackProtector<decltype(&ASIOClient::onResolveFailed)> on_resolve_failed_safe_;
+    CallbackProtector<decltype(&ASIOClient::onConnected)> on_connected_safe_;
+    CallbackProtector<decltype(&ASIOClient::onConnectFailed)> on_connect_failed_safe_;
+    std::shared_ptr<ASIOresolver> resolver_;
+    std::shared_ptr<ASIOconnecter> connecter_;
+    ASIOBufferedTalker talker_;
 };
 
 } /* namespace detail */
@@ -811,28 +850,29 @@ private:
 template<class T>
 concept IsBuffer = std::same_as<Buffer, T>;
 
-class Server : public detail::ASIOserver
+class Server : public detail::ASIOServer
 {
 public:
     template<typename ... Args>
-    Server(Args&& ... args) : detail::ASIOserver(std::forward<Args>(args)...) {}
+    explicit Server(Args&& ... args) : detail::ASIOServer(std::forward<Args>(args)...) {}
 
     template<typename MsgType> requires (not IsBuffer<MsgType>)
-    void send(size_t sessionID, const MsgType& msg)
+    void send(size_t session_id, const MsgType& msg)
     {
         Buffer buf(sizeof(msg));
         std::memcpy(buf.data(), &msg, sizeof(msg));
-        detail::ASIOserver::send(sessionID, std::move(buf));
+        detail::ASIOServer::send(session_id, std::move(buf));
     }
 
     template<typename MsgType> requires (not IsBuffer<MsgType>)
-    bool receiveAnySession(size_t &sessionID, MsgType& msg)
+    bool receiveAnySession(size_t &session_id, MsgType& msg)
     {
         Buffer buf;
-        if(detail::ASIOserver::receiveAnySession(sessionID, buf))
+        if(detail::ASIOServer::receiveAnySession(session_id, buf))
         {
-            if(buf.size() != sizeof(msg))
-                throw "incorrect message size";
+            if(buf.size() != sizeof(msg)) {
+                throw std::runtime_error("incorrect message size");
+            }
             std::memcpy(&msg, buf.data(), buf.size());
             return true;
         };
@@ -840,13 +880,14 @@ public:
     }
 
     template<typename MsgType> requires (not IsBuffer<MsgType>)
-    bool receiveBySessionID(size_t sessionID, MsgType& msg)
+    bool receiveBySession_id(size_t session_id, MsgType& msg)
     {
         Buffer buf;
-        if(detail::ASIOserver::receiveBySessionID(sessionID, buf))
+        if(detail::ASIOServer::receiveBySession_id(session_id, buf))
         {
-            if(buf.size() != sizeof(msg))
-                throw "incorrect message size";
+            if(buf.size() != sizeof(msg)) {
+                throw std::runtime_error("incorrect message size");
+            }
             std::memcpy(&msg, buf.data(), buf.size());
             return true;
         };
@@ -856,11 +897,11 @@ public:
 };
 
 
-class Client : public detail::ASIOclient
+class Client : public detail::ASIOClient
 {
 public:
     template<typename ... Args>
-    Client(Args&& ... args) : detail::ASIOclient(std::forward<Args>(args)...) {}
+    explicit Client(Args&& ... args) : detail::ASIOClient(std::forward<Args>(args)...) {}
 
 
     template<typename MsgType> requires (not IsBuffer<MsgType>)
@@ -868,23 +909,23 @@ public:
     {
         Buffer buf(sizeof(msg));
         std::memcpy(buf.data(), &msg, sizeof(msg));
-        detail::ASIOclient::send(std::move(buf));
+        detail::ASIOClient::send(std::move(buf));
     }
     template<typename MsgType> requires (not IsBuffer<MsgType>)
     bool receive(MsgType& msg)
     {
         Buffer buf;
-        if(detail::ASIOclient::receive(buf))
+        if(detail::ASIOClient::receive(buf))
         {
-            if(buf.size() != sizeof(msg))
-                throw "incorrect message size";
+            if(buf.size() != sizeof(msg)) {
+                throw std::runtime_error("incorrect message size");
+            }
             std::memcpy(&msg, buf.data(), buf.size());
             return true;
         };
         return false;
     }
 };
-
 } /* namespace tea::asiocommunicator */
 
 #endif // ASIOCOMMUNICATOR_H

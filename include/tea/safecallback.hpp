@@ -26,9 +26,8 @@
 #include<memory>
 #include<functional>
 
-namespace tea {
+namespace tea::asiocommunicator {
 
-namespace asiocommunicator {
 
 
 template<typename Function> struct SafeCallback;
@@ -39,55 +38,59 @@ struct SafeCallback<ReturnType(ClassType::*)(Args...)>
 {
 public:
     using FunctionType = ReturnType(Args...);
-    typedef ReturnType(ClassType::*MemberFunctionType)(Args...);
-    SafeCallback(const MemberFunctionType &f_, ClassType* obj_, std::shared_ptr<bool> isAlive_):
-        f(f_), obj(obj_), isAlive(isAlive_)
+    using MemberFunctionType = ReturnType(ClassType::*)(Args...);
+    SafeCallback(const MemberFunctionType &func, ClassType* obj, std::shared_ptr<bool> is_alive):
+        func_(func), obj_(obj), is_alive_(std::move(is_alive))
     {
     }
 
     //SafeCallback(const SafeCallback<ReturnType(ClassType::*)(Args...)>& other) = default;
 
-    void invalidate() { *isAlive = false;}
+    void invalidate() { *is_alive_ = false;}
 
     ReturnType operator() (Args... args) {
-        if(*isAlive) {
-            return (obj->*f)(std::forward<Args>(args)...);
-        } else {
-            return ReturnType();
-        };
+        if(*is_alive_) {
+            return (obj_->*func_)(std::forward<Args>(args)...);
+        }
+        return ReturnType();
     }
 private:
-    MemberFunctionType f;
-    ClassType* obj;
-    std::shared_ptr<bool> isAlive;
+    MemberFunctionType func_;
+    ClassType* obj_;
+    std::shared_ptr<bool> is_alive_;
 };
 
 
 template<typename ClassType, typename ReturnType, typename ... Args>
 struct CallbackProtector<ReturnType(ClassType::*)(Args...)>
 {
-private:
-    std::shared_ptr<bool> isAlive;
 public:
     using SafeCallbackT = SafeCallback<ReturnType(ClassType::*)(Args...)>;
     ~CallbackProtector()
     {
-        *isAlive = false;
+        *is_alive_ = false;
     }
-    CallbackProtector(const typename SafeCallbackT::MemberFunctionType &f_, ClassType* obj_) :
-        isAlive(std::make_shared<bool>(true)),
-        f(f_, obj_, isAlive)
+    CallbackProtector(const typename SafeCallbackT::MemberFunctionType &func, ClassType* obj) :
+        is_alive_(std::make_shared<bool>(true)),
+        func_(func, obj, is_alive_)
         {}
-    SafeCallbackT f;
+
+    CallbackProtector() = delete;
+    CallbackProtector(const CallbackProtector&) = delete;
+    CallbackProtector(CallbackProtector&&) = delete;
+    CallbackProtector& operator=(const CallbackProtector&) = delete;
+    void operator=(CallbackProtector&&) = delete;
 
     //converter to std::function<ReturnType(ClassType::*)(Args...)>
-    operator std::function<typename SafeCallbackT::FunctionType>()
+    operator std::function<typename SafeCallbackT::FunctionType>() //NOLINT 
     {
-        return std::function<typename SafeCallbackT::FunctionType>(f);
+        return std::function<typename SafeCallbackT::FunctionType>(func_);
     }
+private:
+    std::shared_ptr<bool> is_alive_;
+    SafeCallbackT func_;
 };
 
-} /* namespace asiocommunicator */
-} /* namespace tea */
+} /* namespace tea::asiocommunicator */
 
 #endif // SAFECALLBACK_HPP
