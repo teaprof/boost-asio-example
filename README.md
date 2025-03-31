@@ -22,14 +22,14 @@ Documentation on boost::asio can be found [here](https://beta.boost.org/doc/libs
 
 ## Motivation
 
-Original boost::asio examples and tutorial codes are very concise. This is good
+Original boost::asio examples and tutorial codes are concise. This is good
 for learning boost::asio library and understanding how it works, but real-life code 
 is more complex than those examples and usually it requires more precise control of 
 buffers lifetimes, different hooks placed through the whole code, tracking of
-the connection status and many other features. Every time when I started a new project, 
+the connection status and many other features. Every time I started a new project, 
 I took one of the boost::asio examples as a starting point and addded the features
-described above. After some such tries, I decided to prepare my own
-example (the present code) of boost::asio wrapper and use it as a starting point in
+mentioned above. After some such tries, I decided to prepare my own
+example (the present code) of how to use boost::asio and exploit it as a starting point for
 my new projects.
 
 ## Three types of networking apps
@@ -45,8 +45,8 @@ the application or the device. Many of the original boost::asio examples belong 
 (echo server, chat server, daytime server).
 
 3. The second class is desktop applications. Such applications have more complex
-behaviour to deal with network errors. They should help user to diagnose the reason
-of error, and some of them can recover after errors.
+logic to deal with network errors. They should recover after errors when it is possible or 
+help the user to diagnose the reason of the error.
 
 4. The third class is server applications that aren't running on a dedicated hardware.
 Since other programs can be run on the same hardware, such programs should release
@@ -62,12 +62,12 @@ The boost::asio library supports synchonous and asynchronous calls. Here we disc
 asynchronous calls since they should be preferred in high-performance applications.
 
 When we use asynchronous calls of i/o operations, we provide them buffers and
-we should guarantee that these buffers will not be deleted until these operations
+guarantee that these buffers will not be deleted until these operations
 are in progress. 
 
-Following incapsulation principle (and boost::asio), we can declare a class which holds the i/o buffer
+Following incapsulation principle (and boost::asio philosophy), we declare a class which holds the i/o buffer
 and callback member function which should be invoked when asynchronous operation
-completes (so-called completion handler). This class also exposes a function which
+completes (called completion handler). This class also exposes a function which
 starts asynchronous operation. Roughly speaking, such class is the wrapper for
 asynchronous operation. Let us call such kind of objects the **communication objects**.
 
@@ -76,7 +76,7 @@ be deleted.
 
 In boost::asio examples, the special mechanism prevents deletion of such objects 
 when at least one asyncronous operation is in progress. This mechanism is based
-on creating  shared_ptr to such object and capturing it in lambda callback function.
+on creating  shared_ptr to such objects and capturing it in lambda callback function.
 After callback function have been executed, the corresponding shared_ptr is destroyed
 making possible to destroy the communication object.
 
@@ -85,11 +85,10 @@ to this object. But the actual moment when communicator object will be
 deleted depends on when the last asynchronous operation is completed.
 **In other words, the actual moment when the resources will be released depends
 on the speed of the Internet and how quickly the response will be sent by the partner**.
-Furthermore, if the destination host in
+Furthermore, if the destination host is
 down, the application waits for some secs before an async operation completes with a non-zero
 error code. 
-When the resources are limited (for example, 
-if we develop some server application that should free resources as soon as 
+When the resources are limited (as mentioned above, the server application should free resources as soon as 
 possible), such behaviour is unacceptable. 
 
 Server application should destroy buffers of incoming and outgoing messages as soon as possible
@@ -102,20 +101,18 @@ Asynchonous calls are implemented in `boost::asio::io_context` object which cont
 progress of each of the asynchronous operations commited to this object. Main program should call `io_context.poll()` (or any similar function)
 to proceed in such operations. When some asynchronous operation have been finished, `io_context.poll`
 invokes call-back functions provided by the user for this operation. 
-These functions consume recently accepted data and/or
-initiate next asynchronous operation. 
+These functions consume recently accepted data and/or initiate next asynchronous operation. 
 
 When the communication object (see above) is destroyed but the connection is not closed gracefully,
-calling to `io_context.poll` can invoke the callback function that is a member of that deleted object.
-In simple programs (like examples in the documentation for
-`boost::asio`) it is very easy to ensure that `io_context::poll` will not be called
-after that object is destroyed.
+`io_context.poll` can invoke the callback function that is a member of that deleted object.
+In simple programs (like examples in the documentation for `boost::asio`) it is very easy to ensure
+that `io_context::poll` will not be called after that object is destroyed.
 
 In more complex applications, one `io_context` object can serve more than one connection. In this case,
 `io_context::poll` may be invoked to serve one connection object, while another object has already been destroyed.
 
 There are two solutions of this problem:
-1. selectively stop all asynchronous operations for destroyed connection objects (boost::asio provides cancellation slots, 
+1. stop all asynchronous operations for destroyed connection objects (boost::asio provides cancellation slots, 
 or you can call [cancel function](https://www.boost.org/doc/libs/1_83_0/doc/html/boost_asio/reference/basic_stream_socket/cancel/overload2.html)
 (but it has some issues with portatibility).
 2. each callback function should check if the corresponding connection object is still alive (in simple case,
@@ -150,9 +147,8 @@ But we use a special mechanism called SafeCallback (see below).
 or allocated in the heap. No matter how they are created and used, the asynchronous calls will work fine. This is the result of 
 using safe callback mechanism.
 
-
 - Finally, we generalize Server and Client classes by allowing them to send and receive any data type. This is achieved
-by using templates. Of course, when you do `read<YourMessageType>(msg)`, you should be sure that counterpartner sends exactly the same data 
+by using templates. Of course, when you do `read<YourMessageType>(msg)`, you must be sure that the network counterpartner sends exactly the same data 
 (with the same representation of this data in memory).
 
 
