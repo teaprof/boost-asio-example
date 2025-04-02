@@ -75,11 +75,11 @@ public:
         func_(func, obj, is_alive_)
         {}
 
-    CallbackProtector() = delete;
-    CallbackProtector(const CallbackProtector&) = delete;
-    CallbackProtector(CallbackProtector&&) = delete;
-    CallbackProtector& operator=(const CallbackProtector&) = delete;
-    void operator=(CallbackProtector&&) = delete;
+    //CallbackProtector() = delete;
+    //CallbackProtector(const CallbackProtector&) = delete;
+    //CallbackProtector(CallbackProtector&&) = delete;
+    //CallbackProtector& operator=(const CallbackProtector&) = delete;
+    //void operator=(CallbackProtector&&) = delete;
 
     //converter to std::function<ReturnType(ClassType::*)(Args...)>
     operator std::function<typename SafeCallbackT::FunctionType>() //NOLINT 

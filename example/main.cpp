@@ -53,11 +53,19 @@ void serverProcessMessage(const ClientToServerMsg& input, ServerToClientMsg& out
 }
 
 int server()
-{
+{   
+    using tea::asiocommunicator::detail::ASIOBufferedTalker;
+    tea::asiocommunicator::detail::ASIOBufferedTalker talker(tea::asiocommunicator::detail::GetContext::get());
+    tea::asiocommunicator::detail::ASIOBufferedTalker talker2(std::move(talker));
+    std::map<size_t, ASIOBufferedTalker> p1;
+    p1.emplace(10, std::move(talker2));
+    std::map<size_t, ASIOBufferedTalker> p2(std::move(p1));
+
     std::cout<<"I'm a server."<<std::endl;
     std::cout<<"Use Ctrl^C to stop me."<<std::endl;
     boost::asio::io_context context;
     Server srv(context);
+    //Server srv(std::move(srv1));
     srv.startAccept(port);
 
 
@@ -94,7 +102,8 @@ int server()
 int client()
 {
     std::cout<<"I'm a client."<<std::endl;
-    Client client;
+    Client client1;
+    Client client(std::move(client1));
     client.sync_connect("127.0.0.1", port);
     if(client.getStatus() != Client::Status::connectedOk)
     {
