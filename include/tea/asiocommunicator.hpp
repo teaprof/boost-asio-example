@@ -44,7 +44,7 @@ public:
 
     explicit Server(boost::asio::io_context& context) : detail::ASIOServer(context) {}
 
-    Server(Server&& other) = default;
+    Server(Server&& other) = delete;
     Server(const Server& other) = delete;
     Server& operator=(Server&& other) = delete;
     Server& operator=(const Server& other) = delete;

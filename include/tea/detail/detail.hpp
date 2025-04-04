@@ -87,18 +87,9 @@ public:
 
     ~ASIOBufferedTalker() = default;
     ASIOBufferedTalker(const ASIOBufferedTalker&) = delete;
-    ASIOBufferedTalker(ASIOBufferedTalker&& other) :
-        on_read_finished_safe_(std::move(other.on_read_finished_safe_)),
-        on_write_finished_safe_(std::move(other.on_write_finished_safe_)),
-        on_network_failed_safe_(std::move(other.on_network_failed_safe_)),
-        socket_(std::move(other.socket_)),
-        writer_(std::move(other.writer_)), //todo: socket could be destroyed before Writer (or Reader) destoroyed
-        reader_(std::move(other.reader_))
-        { }
-
-    ASIOBufferedTalker& operator=(const ASIOBufferedTalker&) = default;
-    ASIOBufferedTalker& operator=(ASIOBufferedTalker&&) = default;
-    
+    ASIOBufferedTalker(ASIOBufferedTalker&& other) = delete;
+    ASIOBufferedTalker& operator=(const ASIOBufferedTalker&) = delete;
+    ASIOBufferedTalker& operator=(ASIOBufferedTalker&&) = delete; 
 
 
     //What should we do if move or copy constructor is called when async operation in progress?
@@ -196,9 +187,9 @@ private:
        close();
        status_ = Status::failed;
     }
-    CallbackProtector<decltype(&ASIOBufferedTalker::onReadFinished)> on_read_finished_safe_;
-    CallbackProtector<decltype(&ASIOBufferedTalker::onWriteFinished)> on_write_finished_safe_;
-    CallbackProtector<decltype(&ASIOBufferedTalker::onNetworkFailed)> on_network_failed_safe_;
+    MemberFcnCallbackProtector<decltype(&ASIOBufferedTalker::onReadFinished)> on_read_finished_safe_;
+    MemberFcnCallbackProtector<decltype(&ASIOBufferedTalker::onWriteFinished)> on_write_finished_safe_;
+    MemberFcnCallbackProtector<decltype(&ASIOBufferedTalker::onNetworkFailed)> on_network_failed_safe_;
 
     std::shared_ptr<boost::asio::ip::tcp::socket> socket_;
     std::shared_ptr<Writer> writer_;
@@ -220,10 +211,10 @@ public:
     { }
     virtual ~ASIOServer() = default;
 
-    //ASIOServer(const ASIOServer&) = delete;
-    //ASIOServer(ASIOServer&&) = delete;
-    //ASIOServer& operator=(const ASIOServer&) = delete;
-    //void operator=(ASIOServer&&) = delete;
+    ASIOServer(const ASIOServer&) = delete;
+    ASIOServer(ASIOServer&&) = delete;
+    ASIOServer& operator=(const ASIOServer&) = delete;
+    ASIOServer& operator=(ASIOServer&&) = delete;
 
     enum class Status {notStarted, Listening, notListening, closed, terminated};
 
@@ -338,8 +329,8 @@ private:
 
     std::reference_wrapper<boost::asio::io_context> context_;
 
-    CallbackProtector<decltype(&ASIOServer::onAccepted)> on_accepted_safe_;
-    CallbackProtector<decltype(&ASIOServer::onAcceptFailed)> on_accept_failed_safe_; 
+    MemberFcnCallbackProtector<decltype(&ASIOServer::onAccepted)> on_accepted_safe_;
+    MemberFcnCallbackProtector<decltype(&ASIOServer::onAcceptFailed)> on_accept_failed_safe_; 
 
     std::map<size_t, ASIOBufferedTalker> sessions_;
     std::shared_ptr<ASIOAcceptor> acceptor_;
@@ -364,7 +355,7 @@ public:
         talker_(context) { }
 
     ASIOClient(const ASIOClient&) = delete;
-    ASIOClient(ASIOClient&&) = default;
+    ASIOClient(ASIOClient&&) = delete;
     ASIOClient& operator=(const ASIOClient&) = delete;
     void operator=(ASIOClient&&) = delete;
     ~ASIOClient() = default;
@@ -441,10 +432,10 @@ private:
         status_ = Status::connectingFailed;
     }
 
-    CallbackProtector<decltype(&ASIOClient::onResolved)> on_resolved_safe_;
-    CallbackProtector<decltype(&ASIOClient::onResolveFailed)> on_resolve_failed_safe_;
-    CallbackProtector<decltype(&ASIOClient::onConnected)> on_connected_safe_;
-    CallbackProtector<decltype(&ASIOClient::onConnectFailed)> on_connect_failed_safe_;
+    MemberFcnCallbackProtector<decltype(&ASIOClient::onResolved)> on_resolved_safe_;
+    MemberFcnCallbackProtector<decltype(&ASIOClient::onResolveFailed)> on_resolve_failed_safe_;
+    MemberFcnCallbackProtector<decltype(&ASIOClient::onConnected)> on_connected_safe_;
+    MemberFcnCallbackProtector<decltype(&ASIOClient::onConnectFailed)> on_connect_failed_safe_;
     std::shared_ptr<ASIOresolver> resolver_;
     std::shared_ptr<ASIOconnecter> connecter_;
     ASIOBufferedTalker talker_;
