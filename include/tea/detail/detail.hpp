@@ -54,7 +54,7 @@ struct GetContext
 
 //ASIOtalker is a class that implements sending and receiving messages.
 /// \todo: may be split into Reader and Writers
-class ASIOBufferedTalker //todo: maybe rename to QueuedTalker?
+class ASIOBufferedTalker : public IsAliveTracker //todo: maybe rename to QueuedTalker?
 {
 public:
     //Possible values of the connection status
@@ -183,13 +183,13 @@ private:
     }
     void onNetworkFailed(boost::system::error_code& ecode, [[maybe_unused]] size_t len)
     {
-       std::cout<<"ASIOtalker: "<<ecode.message()<<std::endl;
+       std::cout<<"ASIOtalker: "<<ecode.message()<<std::endl; /// \todo: use Log object
        close();
        status_ = Status::failed;
     }
-    MemberFcnCallbackProtector<decltype(&ASIOBufferedTalker::onReadFinished)> on_read_finished_safe_;
-    MemberFcnCallbackProtector<decltype(&ASIOBufferedTalker::onWriteFinished)> on_write_finished_safe_;
-    MemberFcnCallbackProtector<decltype(&ASIOBufferedTalker::onNetworkFailed)> on_network_failed_safe_;
+    SafeMemberFcnCallback<decltype(&ASIOBufferedTalker::onReadFinished)> on_read_finished_safe_;
+    SafeMemberFcnCallback<decltype(&ASIOBufferedTalker::onWriteFinished)> on_write_finished_safe_;
+    SafeMemberFcnCallback<decltype(&ASIOBufferedTalker::onNetworkFailed)> on_network_failed_safe_;
 
     std::shared_ptr<boost::asio::ip::tcp::socket> socket_;
     std::shared_ptr<Writer> writer_;
@@ -199,7 +199,7 @@ private:
     std::queue<MsgBody> write_queue_;
 };
 
-class ASIOServer
+class ASIOServer : public IsAliveTracker
 {
 public:
     using error_code = boost::system::error_code;
@@ -329,15 +329,15 @@ private:
 
     std::reference_wrapper<boost::asio::io_context> context_;
 
-    MemberFcnCallbackProtector<decltype(&ASIOServer::onAccepted)> on_accepted_safe_;
-    MemberFcnCallbackProtector<decltype(&ASIOServer::onAcceptFailed)> on_accept_failed_safe_; 
+    SafeMemberFcnCallback<decltype(&ASIOServer::onAccepted)> on_accepted_safe_;
+    SafeMemberFcnCallback<decltype(&ASIOServer::onAcceptFailed)> on_accept_failed_safe_; 
 
     std::map<size_t, ASIOBufferedTalker> sessions_;
     std::shared_ptr<ASIOAcceptor> acceptor_;
 
 };
 
-class ASIOClient
+class ASIOClient : public IsAliveTracker
 {
 public:
     enum class Status
@@ -432,10 +432,10 @@ private:
         status_ = Status::connectingFailed;
     }
 
-    MemberFcnCallbackProtector<decltype(&ASIOClient::onResolved)> on_resolved_safe_;
-    MemberFcnCallbackProtector<decltype(&ASIOClient::onResolveFailed)> on_resolve_failed_safe_;
-    MemberFcnCallbackProtector<decltype(&ASIOClient::onConnected)> on_connected_safe_;
-    MemberFcnCallbackProtector<decltype(&ASIOClient::onConnectFailed)> on_connect_failed_safe_;
+    SafeMemberFcnCallback<decltype(&ASIOClient::onResolved)> on_resolved_safe_;
+    SafeMemberFcnCallback<decltype(&ASIOClient::onResolveFailed)> on_resolve_failed_safe_;
+    SafeMemberFcnCallback<decltype(&ASIOClient::onConnected)> on_connected_safe_;
+    SafeMemberFcnCallback<decltype(&ASIOClient::onConnectFailed)> on_connect_failed_safe_;
     std::shared_ptr<ASIOresolver> resolver_;
     std::shared_ptr<ASIOconnecter> connecter_;
     ASIOBufferedTalker talker_;

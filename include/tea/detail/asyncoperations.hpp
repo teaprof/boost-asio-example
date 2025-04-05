@@ -142,7 +142,7 @@ private:
     void doWriteHeader()
     {
         write_in_progress_ = true;
-        auto self(shared_from_this());
+        auto self(shared_from_this()); /// \todo: here should be weak_from_this        
         header_.initialize(body_);
         boost::asio::async_write(*socket_,
                                  boost::asio::buffer(header_.data(), MsgHeader::headerLen()),
