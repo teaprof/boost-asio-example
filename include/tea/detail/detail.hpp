@@ -220,7 +220,7 @@ public:
 
     void startAccept(port_t port)
     {
-        acceptor_ = ASIOAcceptor::create_shared_ptr(context_, port, on_accepted_safe_, on_accept_failed_safe_);
+        acceptor_ = Acceptor::create_shared_ptr(context_, port, on_accepted_safe_, on_accept_failed_safe_);
         acceptor_->start_accept();
     }
 
@@ -333,7 +333,7 @@ private:
     SafeMemberFcnCallback<decltype(&ASIOServer::onAcceptFailed)> on_accept_failed_safe_; 
 
     std::map<size_t, ASIOBufferedTalker> sessions_;
-    std::shared_ptr<ASIOAcceptor> acceptor_;
+    std::shared_ptr<Acceptor> acceptor_;
 
 };
 
@@ -350,8 +350,8 @@ public:
         context_(context),
         on_resolved_safe_(&ASIOClient::onResolved, this), on_resolve_failed_safe_(&ASIOClient::onResolveFailed, this),
         on_connected_safe_(&ASIOClient::onConnected, this), on_connect_failed_safe_(&ASIOClient::onConnectFailed, this),
-        resolver_(ASIOresolver::create_shared_ptr(context, on_resolved_safe_, on_resolve_failed_safe_)),
-        connecter_(ASIOconnecter::create_shared_ptr(context, on_connected_safe_, on_connect_failed_safe_)),
+        resolver_(Resolver::create_shared_ptr(context, on_resolved_safe_, on_resolve_failed_safe_)),
+        connecter_(Connecter::create_shared_ptr(context, on_connected_safe_, on_connect_failed_safe_)),
         talker_(context) { }
 
     ASIOClient(const ASIOClient&) = delete;
@@ -436,8 +436,8 @@ private:
     SafeMemberFcnCallback<decltype(&ASIOClient::onResolveFailed)> on_resolve_failed_safe_;
     SafeMemberFcnCallback<decltype(&ASIOClient::onConnected)> on_connected_safe_;
     SafeMemberFcnCallback<decltype(&ASIOClient::onConnectFailed)> on_connect_failed_safe_;
-    std::shared_ptr<ASIOresolver> resolver_;
-    std::shared_ptr<ASIOconnecter> connecter_;
+    std::shared_ptr<Resolver> resolver_;
+    std::shared_ptr<Connecter> connecter_;
     ASIOBufferedTalker talker_;
 };
 

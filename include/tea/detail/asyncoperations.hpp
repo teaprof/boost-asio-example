@@ -42,7 +42,7 @@ namespace detail {
 using port_t = uint16_t;
 static_assert(sizeof(port_t) >= 2, "size of port_t should be atleat 2 bytes");
 
-//Declare types for various callback functions
+//Signatures of different callback functions
 using onReadFinishedT = void(MsgHeader&, MsgBody&&);
 using onWriteFinishedT = void(MsgBody&&);
 using onNetworkFailedT =void(boost::system::error_code&, size_t len);
@@ -53,39 +53,54 @@ using onResolveFailedT = void(const boost::system::error_code&);
 using onConnectedT = void(const typename boost::asio::ip::tcp::endpoint&);
 using onConnectFailedT = void(const boost::system::error_code&);
 
-/*!
- * @brief The base class for any async operation classes
- * @details The only function of this class is to make the objects of the derived type T 
- * safe in terms of the asyncronous operations. It mean that object of type T should not be
- * destroyed before asyncronous operation is completed or cancelled. To control the life-time
- * of such objects we use shared pointers. It means that
- * - such objects should not be allocated on stack
- * @tparam T is the type of the derived concrete async operation class. 
+//! The base class for any other classes wrapping boost::asio async operations.
+/**
+ * This class protects the derived classes from deletion during asyncronous 
+ * operations. Since such objects incapsulate
+ * buffers and callback functions for async io operations, it means that they
+ * should not be destroyed before asyncronous operation is completed or cancelled.
+ * For the same reason, they should not be copied and moved.
+ * 
+ * To prevent the deletion of such objects during async operation in progress 
+ * the objects of derived types are managed by shared pointers. The direct creation
+ * of such objects is prohibited (constructor is declared as private).
+ * @tparam T is the type of the derived class
  */
 template<class T>
 class AsyncOperationBase: public std::enable_shared_from_this<T>
-{
-public:
+{    
+public:  
     AsyncOperationBase() = default;
 
-    //we should not copy or move this object because we don't know
-    //what we should do with pending io operations.
-    /// \todo: why move operations are prohibited too?
+    /** @name Copy and move
+     *  copy and move operations are prohibited for the reason described above
+     *  @{
+     */
     AsyncOperationBase(const AsyncOperationBase&) = delete;
-    //AsyncOperationBase(AsyncOperationBase&&) = delete;
+    AsyncOperationBase(AsyncOperationBase&&) = delete;
     void operator=(const AsyncOperationBase&) = delete;
     void operator=(AsyncOperationBase&&) = delete;
+    ///@}
+
     ~AsyncOperationBase() = default;
 
-
-    //All derived classes should hide their constructors because only shared_ptrs
-    //to such objects are allowed. Instead of calling the constructor, call this function
-    //to create a shared_ptr to the derived object.
+    /** @name Object creation
+     * All derived classes should hide their constructors because only shared_ptrs
+     * to such objects are allowed. Instead of calling the constructor, call these functions
+     * to create a shared_ptr to the derived object.
+     * 
+     * This functions differ only by the way they create shared pointers. 
+     * @{
+     */    
+    //! Create new object and return shared pointer to it
+    /**
+     * This function requires only one memory allocation (control block of shared_ptr and 
+     * object itself of type T are allocated in the same time), but object's memory can be 
+     * deallocated only with deallocation of control block (when all shared_ptrs and weak_ptrs 
+     * to this object are destroyed)
+     */
     template<typename ... Args>
     static std::shared_ptr<T> create_shared_ptr_fast(Args&&...args)
-    /// requires only one memory allocation (control block and object of type T are allocated in the same time),
-    /// but object's memory can be deallocated only with deallocation of control block (when last shared_ptr 
-    /// to this object is destroyed)
     {
         // This is the way how to call private constructor of T. AsyncOperationBase should
         // be the friend of T.
@@ -96,20 +111,27 @@ public:
         return std::make_shared<MakeSharedEnabler>(std::forward<Args>(args)...);
     }
 
-    /// this version allocates two blocks of memory: one for control block and one for the object.
+    /// Create new object and return shared pointer to it
+    /**
+     * This function allocatates two blocks in memory: one for shared_ptr control block and 
+     * one for the managed object of type T. When the last shared_ptr to this object
+     * is destroyed the object is destroyed immediately. The control block is destroyed
+     * until last weak_ptr is destroyed.
+     */
     template<typename ... Args>
     static std::shared_ptr<T> create_shared_ptr(Args&&...args)
     {
-        // the following instructions don't lead to the memory leak
+        // the following instructions don't lead to the memory leak in any case
         return std::shared_ptr<T>(new T(std::forward<Args>(args)...));
     }
+    /// @}
 };
 
 
+//! Object-oriented wrapper for async write operations incapsulating all required memory buffers and callback functions
 /**
- * \brief Object-oriented wrapper for async write operations incapsulating all required memory buffers
- * \details This wrapper can send arbitrary message. The message consists of the header and the body,
- * Header contains the size of the body and used to keep states of transmitter and receiver synchronized.
+ * This class can send arbitrary message. The message consists of the header and the body,
+ * Header contains the size of the body. The body part of the message is the message itself.
  * 
  * This object should not be created directly calling the constructor (see comments on constructor).
  */
@@ -118,19 +140,22 @@ class Writer: public AsyncOperationBase<Writer>
     // add AsyncOperationBase to friends to grant him access to the private constructor of this class
     friend class AsyncOperationBase<Writer>;
 
-    // The constructor is private to avoid creation objects of this type which are not managed by shared_ptrs.
-    // This object should be created using static function Writer::create_shared_ptr_fast or Writer::create_shared_ptr 
-    // inherited from AsyncOperationBase.    
+    //! private constructor
+    /** The constructor is private to avoid creation objects of this type which are not managed by shared_ptrs.
+     *  This object should be created using static function Writer::create_shared_ptr_fast or Writer::create_shared_ptr 
+     *  inherited from AsyncOperationBase.    
+     */
     Writer(std::shared_ptr<boost::asio::ip::tcp::socket> socket, std::function<onWriteFinishedT> on_write_finished, std::function<onNetworkFailedT> on_network_failed) :
         on_write_finished_(std::move(on_write_finished)), on_network_failed_(std::move(on_network_failed)), socket_(std::move(socket)) {}
-public:
-    //Writer(Writer&& other);
-    
-    /// this method is called when connection established and socket becomes known
+public:  
+    //! set socket for communications
+    /** When creating this object the socket could be unknown. This method should 
+     * be called when the connection is established and the socket becomes known. */
     void setSocket(std::shared_ptr<boost::asio::ip::tcp::socket> socket) {
         socket_ = std::move(socket);
     }
 
+    //! send message
     void send(MsgBody&& buffer)
     {
         assert(write_in_progress_ == false);
@@ -138,24 +163,26 @@ public:
         doWriteHeader();
     }
 
-    /// this method should be called to greacefully close all connections
-    void close() { /* not implemented yet, but works fine */}
+    /// Close all connections
+    void close() { /* nothing to do */}
 
     /// return true if any async operation is in progress (submitted but not finished yet)
     bool writeInProgress() const {return write_in_progress_;}
 
-    /// return error code of the last finished async operation    
-    /// \todo: this function is redundant because in case of error the callback is invoked or exception is thrown
+    //! return error code of the last finished async operation
+    /** This function is auxiliary because in case of error the callback is invoked or exception is thrown */
     boost::system::error_code errorCode() { return error_code_; }
 private:
     bool write_in_progress_ = false;
 
-    ///@{
-    // callback functions that are passed as one of the arguments when any async operation is called
+    /// @name callback functions:
+    /// callback functions that are passed as one of the arguments when any async operation is called
+    ///@{    
     std::function<onWriteFinishedT> on_write_finished_;
     std::function<onNetworkFailedT> on_network_failed_;
     ///@}
 
+    /// @name message to transmit:
     ///@{
     /// header and body part of the message being transmitted
     MsgHeader header_;
@@ -169,6 +196,10 @@ private:
     boost::system::error_code error_code_;
 
 
+    /**
+     * @name functions for sending message and callbacks
+     * @{
+     */
     /// initialize `header_` and initiate async write of the `header_`
     void doWriteHeader()
     {
@@ -242,6 +273,7 @@ private:
             on_write_finished_(std::move(body_));
         }
     }
+    /// @}
 };
 
 class Reader: public AsyncOperationBase<Reader>
@@ -287,7 +319,7 @@ private:
     void onReadHeaderFinished(boost::system::error_code err_code, size_t len)
     {
         error_code_ = err_code;
-        if(header_.signature() != MsgHeaderBuffer::header_signature) {
+        if(header_.signature != MsgHeader::header_signature) {
             throw std::runtime_error("tea::asiocommunicator::Reader::onReadHeaderFinished: unexpected value, can't parse message header");
         }
         if(err_code.failed())
@@ -308,7 +340,7 @@ private:
     void doReadBody()
     {
         auto self(shared_from_this());        
-        body_.resize(header_.msglen());
+        body_.resize(header_.msglen);
         boost::asio::async_read(*socket_, boost::asio::buffer(body_.data(), body_.size()),
                                 std::bind(&Reader::onReadBodyFinished, self, std::placeholders::_1, std::placeholders::_2));
     }
@@ -334,21 +366,21 @@ private:
     }
 };
 
-class ASIOAcceptor : public AsyncOperationBase<ASIOAcceptor>
+class Acceptor : public AsyncOperationBase<Acceptor>
 {
-    friend class AsyncOperationBase<ASIOAcceptor>;
+    friend class AsyncOperationBase<Acceptor>;
 
-    ASIOAcceptor(boost::asio::io_context& context, port_t port, std::function<onAcceptedT> on_new_connection, std::function<onAcceptFailedT> on_accept_failed)
+    Acceptor(boost::asio::io_context& context, port_t port, std::function<onAcceptedT> on_new_connection, std::function<onAcceptFailedT> on_accept_failed)
     : on_new_connection_(std::move(on_new_connection)), on_accept_failed_(std::move(on_accept_failed)), context_(context), acceptor_(context_, boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), port)) 
     {}
 public:
-    ASIOAcceptor() = delete;
-    ASIOAcceptor(const ASIOAcceptor&) = delete;
-    ASIOAcceptor(ASIOAcceptor&&) = delete;
-    ASIOAcceptor operator=(const ASIOAcceptor&) = delete;
-    ASIOAcceptor operator=(ASIOAcceptor&&) = delete;
+    Acceptor() = delete;
+    Acceptor(const Acceptor&) = delete;
+    Acceptor(Acceptor&&) = delete;
+    Acceptor operator=(const Acceptor&) = delete;
+    Acceptor operator=(Acceptor&&) = delete;
 
-    ~ASIOAcceptor()
+    ~Acceptor()
     {
         try {
             close();
@@ -394,7 +426,7 @@ private:
         auto self(shared_from_this());
         msocket_ = std::make_shared<boost::asio::ip::tcp::socket>(context_);
         //endpoint = boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), mport);
-        acceptor_.async_accept(*msocket_, std::bind(&ASIOAcceptor::onAcceptNewConnection, self, std::placeholders::_1)); //, std::placeholders::_2));
+        acceptor_.async_accept(*msocket_, std::bind(&Acceptor::onAcceptNewConnection, self, std::placeholders::_1)); //, std::placeholders::_2));
     }
 
     void onAcceptNewConnection(const boost::system::error_code& err_code) //, boost::asio::ip::tcp::socket socket)
@@ -426,11 +458,11 @@ private:
     bool accept_in_progress_{false};
 };
 
-class ASIOresolver : public AsyncOperationBase<ASIOresolver>
+class Resolver : public AsyncOperationBase<Resolver>
 {
-    friend class AsyncOperationBase<ASIOresolver>;
+    friend class AsyncOperationBase<Resolver>;
 
-    ASIOresolver(boost::asio::io_context& io_context, std::function<onResolvedT> on_resolved, std::function<onResolveFailedT> on_resolve_failed)
+    Resolver(boost::asio::io_context& io_context, std::function<onResolvedT> on_resolved, std::function<onResolveFailedT> on_resolve_failed)
     : on_resolved_(std::move(on_resolved)), on_resolve_failed_(std::move(on_resolve_failed)), resolver_(io_context) { }
 
 public:
@@ -447,7 +479,7 @@ private:
     void doResolve(const std::string& address, const std::string& port)
     {
         auto self(shared_from_this());
-        resolver_.async_resolve(address, port, std::bind(&ASIOresolver::onResolveFinished, self, std::placeholders::_1, std::placeholders::_2));
+        resolver_.async_resolve(address, port, std::bind(&Resolver::onResolveFinished, self, std::placeholders::_1, std::placeholders::_2));
     }
     void onResolveFinished(const boost::system::error_code& err_code, const boost::asio::ip::tcp::resolver::results_type& results)
     {
@@ -469,10 +501,10 @@ private:
     boost::asio::ip::tcp::resolver resolver_;
 };
 
-class ASIOconnecter : public AsyncOperationBase<ASIOconnecter>
+class Connector : public AsyncOperationBase<Connector>
 {
-    friend class AsyncOperationBase<ASIOconnecter>;
-    ASIOconnecter(boost::asio::io_context& context, std::function<onConnectedT> on_connected, std::function<onConnectFailedT> on_connect_failed)
+    friend class AsyncOperationBase<Connector>;
+    Connector(boost::asio::io_context& context, std::function<onConnectedT> on_connected, std::function<onConnectFailedT> on_connect_failed)
         : context_(context), msocket_(std::make_shared<boost::asio::ip::tcp::socket>(context)),
         on_connected_(std::move(on_connected)), on_connect_failed_(std::move(on_connect_failed)) {}    
 public:
@@ -494,7 +526,7 @@ private:
     {
         auto self(shared_from_this());
         msocket_ = std::make_shared<boost::asio::ip::tcp::socket>(context_);
-        boost::asio::async_connect(*msocket_, end_points_, std::bind(&ASIOconnecter::onConnectFinished, self, std::placeholders::_1, std::placeholders::_2));
+        boost::asio::async_connect(*msocket_, end_points_, std::bind(&Connector::onConnectFinished, self, std::placeholders::_1, std::placeholders::_2));
     }
 
     void onConnectFinished(const boost::system::error_code &err_code, const typename boost::asio::ip::tcp::endpoint &ep)
@@ -506,7 +538,7 @@ private:
                 on_connect_failed_(err_code);
             } else {
                 std::stringstream str;
-                str<<"tea::asiocommunicator::ASIOconnecter::onConnectFinished: Can't connect to host: "<<err_code;
+                str<<"tea::asiocommunicator::Connector::onConnectFinished: Can't connect to host: "<<err_code;
                 throw std::runtime_error(str.str());
             }
         } else {
