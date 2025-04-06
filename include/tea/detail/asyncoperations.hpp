@@ -106,13 +106,27 @@ public:
 };
 
 
+/**
+ * \brief Object-oriented wrapper for async write operations incapsulating all required memory buffers
+ * \details This wrapper can send arbitrary message. The message consists of the header and the body,
+ * Header contains the size of the body and used to keep states of transmitter and receiver synchronized.
+ * 
+ * This object should not be created directly calling the constructor (see comments on constructor).
+ */
 class Writer: public AsyncOperationBase<Writer>
 {
     // add AsyncOperationBase to friends to grant him access to the private constructor of this class
     friend class AsyncOperationBase<Writer>;
+
+    // The constructor is private to avoid creation objects of this type which are not managed by shared_ptrs.
+    // This object should be created using static function Writer::create_shared_ptr_fast or Writer::create_shared_ptr 
+    // inherited from AsyncOperationBase.    
+    Writer(std::shared_ptr<boost::asio::ip::tcp::socket> socket, std::function<onWriteFinishedT> on_write_finished, std::function<onNetworkFailedT> on_network_failed) :
+        on_write_finished_(std::move(on_write_finished)), on_network_failed_(std::move(on_network_failed)), socket_(std::move(socket)) {}
 public:
-    Writer(Writer&& other);
-    // \todo: is this function needed?
+    //Writer(Writer&& other);
+    
+    /// this method is called when connection established and socket becomes known
     void setSocket(std::shared_ptr<boost::asio::ip::tcp::socket> socket) {
         socket_ = std::move(socket);
     }
@@ -124,64 +138,107 @@ public:
         doWriteHeader();
     }
 
-    void close() {}
+    /// this method should be called to greacefully close all connections
+    void close() { /* not implemented yet, but works fine */}
+
+    /// return true if any async operation is in progress (submitted but not finished yet)
     bool writeInProgress() const {return write_in_progress_;}
+
+    /// return error code of the last finished async operation    
+    /// \todo: this function is redundant because in case of error the callback is invoked or exception is thrown
+    boost::system::error_code errorCode() { return error_code_; }
 private:
-    Writer(std::shared_ptr<boost::asio::ip::tcp::socket> socket, std::function<onWriteFinishedT> on_write_finished, std::function<onNetworkFailedT> on_network_failed) :
-        on_write_finished_(std::move(on_write_finished)), on_network_failed_(std::move(on_network_failed)), socket_(std::move(socket)) {}
-
-
     bool write_in_progress_ = false;
+
+    ///@{
+    // callback functions that are passed as one of the arguments when any async operation is called
     std::function<onWriteFinishedT> on_write_finished_;
     std::function<onNetworkFailedT> on_network_failed_;
-    std::shared_ptr<boost::asio::ip::tcp::socket> socket_;
+    ///@}
 
+    ///@{
+    /// header and body part of the message being transmitted
     MsgHeader header_;
     MsgBody body_;
+    ///@}
 
+    /// socket where messages are written to
+    std::shared_ptr<boost::asio::ip::tcp::socket> socket_;
+    
+    /// error code of the last finished async operation
+    boost::system::error_code error_code_;
+
+
+    /// initialize `header_` and initiate async write of the `header_`
     void doWriteHeader()
     {
+        // change status.
         write_in_progress_ = true;
-        auto self(shared_from_this()); /// \todo: here should be weak_from_this        
+        // create shared ptr from this using `enable_shared_from_this`
+        auto self(shared_from_this());
+        // initialize header that should be sent to counter party
         header_.initialize(body_);
+        // submit async operation. We pass shared_ptr to `*this` inplace of raw ptr to ensure that `this` will not be destroyed before
+        // async operation is completed. 
         boost::asio::async_write(*socket_,
                                  boost::asio::buffer(header_.data(), MsgHeader::headerLen()),
                                  std::bind(&Writer::onWriteHeaderFinished, self, std::placeholders::_1, std::placeholders::_2));
     }
 
+    /// Callback function which is invoked when async write of the header is finished. It 
+    /// initiates transmitting of the message body if no error during transmitting the header has occured. In case
+    /// of error, the `on_network_failed` is called (or exception is thrown, if std::function `on_network_failed`    
+    /// set by constructor is empty)
     void onWriteHeaderFinished(boost::system::error_code err_code, size_t len)
     {
+        error_code_ = err_code;
         if(err_code.failed())
         {
-            write_in_progress_ = true;
+            // error has occured during async network operation
+            write_in_progress_ = false;
             if(on_network_failed_) {
+                // if callback function is set, call it
                 on_network_failed_(err_code, len);
             } else {
-                throw std::runtime_error("tea::asiocommunicator::Reader::onWriteHeaderFinished: async_write returned non-zero code");
+                // otherwise throw an exception
+                std::stringstream str;
+                str<<"tea::asiocommunicator::Writer::onWriteHeaderFinished: async_write returned non-zero code: "<<err_code;
+                throw std::runtime_error(str.str());
             }
         } else {
+            // async network operation finished successfully,
+            // proceed to the next step:            
             doWriteBody();
         }
     }
 
+    /// initiate async write of the message body
     void doWriteBody()
     {        
+        assert(write_in_progress_);
         auto self(shared_from_this());
         boost::asio::async_write(*socket_, boost::asio::buffer(body_.data(), body_.size()),
                                  std::bind(&Writer::onWriteBodyFinished, self, std::placeholders::_1, std::placeholders::_2));
     }
 
-    void onWriteBodyFinished(boost::system::error_code ecode, size_t len)
+    /// Callback function which is invoked when async write of the message body is finished. 
+    /// It invokes `on_write_finished` if no error during transmitting the message body has occured.
+    /// In case of error, the `on_network_failed` is called (or exception is thrown, if std::function `on_network_failed`
+    /// is empty)
+    void onWriteBodyFinished(boost::system::error_code err_code, size_t len)
     {
+        error_code_ = err_code;
         write_in_progress_ = false;
-        if(ecode.failed())
+        if(err_code.failed())
         {
             if(on_network_failed_) {
-                on_network_failed_(ecode, len);
+                on_network_failed_(err_code, len);
             } else {
-                throw std::runtime_error("tea::asiocommunicator::Reader::onWriteHeaderFinished: async_write returned non-zero code");
+                std::stringstream str;
+                str<<"tea::asiocommunicator::Writer::onWriteBodyFinished: async_write returned non-zero code: "<<err_code;
+                throw std::runtime_error(str.str());
             }
-        } else {
+        } else {            
             on_write_finished_(std::move(body_));
         }
     }
@@ -191,6 +248,9 @@ class Reader: public AsyncOperationBase<Reader>
 {
     // add AsyncOperationBase to friends to grant him access to the private constructor of this class
     friend class AsyncOperationBase<Reader>;
+
+    Reader(std::shared_ptr<boost::asio::ip::tcp::socket> socket, std::function<onReadFinishedT> on_read_finished, std::function<onNetworkFailedT> on_network_failed) :
+        on_read_finished_(std::move(on_read_finished)), on_network_failed_(std::move(on_network_failed)), socket_(std::move(socket)) {}
 public:
     void setSocket(std::shared_ptr<boost::asio::ip::tcp::socket> sock)
     {
@@ -201,46 +261,44 @@ public:
         assert(read_in_progress_ == false);
         doReadHeader();
     }
-    boost::system::error_code errorCode() { return error_code_; }
     bool readInProgress() const {return read_in_progress_; }
-    void close() {}
+    boost::system::error_code errorCode() { return error_code_; }
+    void close() {}    
 private:
-    Reader(std::shared_ptr<boost::asio::ip::tcp::socket> socket, std::function<onReadFinishedT> on_read_finished, std::function<onNetworkFailedT> on_network_failed) :
-        on_read_finished_(std::move(on_read_finished)), on_network_failed_(std::move(on_network_failed)), socket_(std::move(socket)) {}
-
-
     bool read_in_progress_ = false;
-    boost::system::error_code error_code_;
+
     std::function<onReadFinishedT> on_read_finished_;
     std::function<onNetworkFailedT> on_network_failed_;
+
     MsgHeader header_;
     MsgBody body_;
+
     std::shared_ptr<boost::asio::ip::tcp::socket> socket_;
+    boost::system::error_code error_code_;
 
 
     void doReadHeader()
     {
-        //at least one shared_ptr to 'this' pointer in your program should exists
-        //before this line, otherwise bad_weak_ptr exception will be thrown
-        auto self(shared_from_this());
         read_in_progress_ = true;
-
+        auto self(shared_from_this());
         boost::asio::async_read(*socket_, boost::asio::buffer(header_.data(), MsgHeader::headerLen()),
                                 std::bind(&Reader::onReadHeaderFinished, self, std::placeholders::_1, std::placeholders::_2));
     }
-    void onReadHeaderFinished(boost::system::error_code ecode, size_t len)
+    void onReadHeaderFinished(boost::system::error_code err_code, size_t len)
     {
-        error_code_ = ecode;
+        error_code_ = err_code;
         if(header_.signature() != MsgHeaderBuffer::header_signature) {
             throw std::runtime_error("tea::asiocommunicator::Reader::onReadHeaderFinished: unexpected value, can't parse message header");
         }
-        if(ecode.failed())
+        if(err_code.failed())
         {
             read_in_progress_ = false;
             if(on_network_failed_) {
-                on_network_failed_(ecode, len);
+                on_network_failed_(err_code, len);
             } else {
-                throw std::runtime_error("tea::asiocommunicator::Reader::onReadHeaderFinished: async_read returned non-zero code");
+                std::stringstream str;
+                str<<"tea::asiocommunicator::Reader::onReadHeaderFinished: async_read returned non-zero code: "<<err_code;
+                throw std::runtime_error(str.str());
             }
         } else {
             doReadBody();
@@ -255,16 +313,18 @@ private:
                                 std::bind(&Reader::onReadBodyFinished, self, std::placeholders::_1, std::placeholders::_2));
     }
 
-    void onReadBodyFinished(boost::system::error_code ecode, size_t len)
+    void onReadBodyFinished(boost::system::error_code err_code, size_t len)
     {
         read_in_progress_ = false;
-        error_code_ = ecode;
-        if(ecode.failed())
+        error_code_ = err_code;
+        if(err_code.failed())
         {
             if(on_network_failed_) {
-                on_network_failed_(ecode, len);
+                on_network_failed_(err_code, len);
             } else {
-                throw std::runtime_error("tea::asiocommunicator::Reader::onReadHeaderFinished: async_read returned non-zero code");
+                std::stringstream str;
+                str<<"tea::asiocommunicator::Reader::onReadBodyFinished: async_read returned non-zero code: "<<err_code;
+                throw std::runtime_error(str.str());
             }
         } else {
             if(on_read_finished_) {
@@ -277,6 +337,10 @@ private:
 class ASIOAcceptor : public AsyncOperationBase<ASIOAcceptor>
 {
     friend class AsyncOperationBase<ASIOAcceptor>;
+
+    ASIOAcceptor(boost::asio::io_context& context, port_t port, std::function<onAcceptedT> on_new_connection, std::function<onAcceptFailedT> on_accept_failed)
+    : on_new_connection_(std::move(on_new_connection)), on_accept_failed_(std::move(on_accept_failed)), context_(context), acceptor_(context_, boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), port)) 
+    {}
 public:
     ASIOAcceptor() = delete;
     ASIOAcceptor(const ASIOAcceptor&) = delete;
@@ -287,7 +351,7 @@ public:
     ~ASIOAcceptor()
     {
         try {
-            acceptor_.close();
+            close();
         } catch (...) {
             //nothing to do
         }
@@ -297,7 +361,7 @@ public:
     //This function can be used to stop current acceptor operation and start accepting on a new port
     {
         //First, we should to close current operation
-        acceptor_.close();
+        close();
         //Then we have two alternatives:
         //Alternative 1: create new acceptor object (acceptor constructor will call open, bind and listen by itself), like in the following code
         //acceptor = std::move(boost::asio::ip::tcp::acceptor(context, boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), mport)));
@@ -315,13 +379,11 @@ public:
     }
 
     bool acceptInProgress() const { return accept_in_progress_;}
+    boost::system::error_code errorCode() { return error_code_; }
+    void close() { acceptor_.close(); }
 private:
-    ASIOAcceptor(boost::asio::io_context& context, port_t port,
-                 std::function<onAcceptedT> on_new_connection,
-                 std::function<onAcceptFailedT> on_accept_failed)
-        : on_new_connection_(std::move(on_new_connection)),
-        on_accept_failed_(std::move(on_accept_failed)),
-        context_(context), acceptor_(context_, boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), port)) {}
+    boost::system::error_code error_code_;
+
 
     void doAccept()
     {
@@ -335,15 +397,18 @@ private:
         acceptor_.async_accept(*msocket_, std::bind(&ASIOAcceptor::onAcceptNewConnection, self, std::placeholders::_1)); //, std::placeholders::_2));
     }
 
-    void onAcceptNewConnection(const boost::system::error_code& ecode) //, boost::asio::ip::tcp::socket socket)
+    void onAcceptNewConnection(const boost::system::error_code& err_code) //, boost::asio::ip::tcp::socket socket)
     {
         accept_in_progress_ = false;
-        if(ecode.failed())
+        error_code_ = err_code;
+        if(err_code.failed())
         {
             if(on_accept_failed_) {
-                on_accept_failed_(ecode);
+                on_accept_failed_(err_code);
             } else {
-                throw std::runtime_error("tea::asiocommunicator::ASIOacceptor::onAcceptNewConnection: async_accept returned non-zero code");
+                std::stringstream str;
+                str<<"tea::asiocommunicator::ASIOacceptor::onAcceptNewConnection: async_accept returned non-zero code: "<<err_code;
+                throw std::runtime_error(str.str());
             }
         } else {
             on_new_connection_(std::move(*msocket_));
@@ -355,7 +420,7 @@ private:
     std::shared_ptr<boost::asio::ip::tcp::socket> msocket_;
 
     std::function<void(boost::asio::ip::tcp::socket&&)> on_new_connection_;
-    std::function<void(const boost::system::error_code& ecode)> on_accept_failed_;
+    std::function<void(const boost::system::error_code& err_code)> on_accept_failed_;
     boost::asio::io_context& context_;
     boost::asio::ip::tcp::acceptor acceptor_;
     bool accept_in_progress_{false};
@@ -364,32 +429,36 @@ private:
 class ASIOresolver : public AsyncOperationBase<ASIOresolver>
 {
     friend class AsyncOperationBase<ASIOresolver>;
+
+    ASIOresolver(boost::asio::io_context& io_context, std::function<onResolvedT> on_resolved, std::function<onResolveFailedT> on_resolve_failed)
+    : on_resolved_(std::move(on_resolved)), on_resolve_failed_(std::move(on_resolve_failed)), resolver_(io_context) { }
+
 public:
 
     void resolve(const std::string& address, const std::string& port)
     {
         doResolve(address, port);
     }
+    boost::system::error_code errorCode() { return error_code_; }
+    void close() { }
 private:
-
-    ASIOresolver(boost::asio::io_context& io_context, std::function<onResolvedT> on_resolved, std::function<onResolveFailedT> on_resolve_failed)
-        : on_resolved_(std::move(on_resolved)), on_resolve_failed_(std::move(on_resolve_failed)), resolver_(io_context)
-    { }
+    boost::system::error_code error_code_;
 
     void doResolve(const std::string& address, const std::string& port)
     {
         auto self(shared_from_this());
         resolver_.async_resolve(address, port, std::bind(&ASIOresolver::onResolveFinished, self, std::placeholders::_1, std::placeholders::_2));
     }
-    void onResolveFinished(const boost::system::error_code& ecode, const boost::asio::ip::tcp::resolver::results_type& results)
+    void onResolveFinished(const boost::system::error_code& err_code, const boost::asio::ip::tcp::resolver::results_type& results)
     {
-        if(ecode.failed())
+        error_code_ = err_code;
+        if(err_code.failed())
         {
             if(on_resolve_failed_)
             {
-                on_resolve_failed_(ecode);
+                on_resolve_failed_(err_code);
             } else {
-                throw std::runtime_error(std::string("Can't resolve host, error = ") + ecode.message());
+                throw std::runtime_error(std::string("Can't resolve host, error = ") + err_code.message());
             }
         } else {
             on_resolved_(results);
@@ -403,6 +472,9 @@ private:
 class ASIOconnecter : public AsyncOperationBase<ASIOconnecter>
 {
     friend class AsyncOperationBase<ASIOconnecter>;
+    ASIOconnecter(boost::asio::io_context& context, std::function<onConnectedT> on_connected, std::function<onConnectFailedT> on_connect_failed)
+        : context_(context), msocket_(std::make_shared<boost::asio::ip::tcp::socket>(context)),
+        on_connected_(std::move(on_connected)), on_connect_failed_(std::move(on_connect_failed)) {}    
 public:
     void connect(const boost::asio::ip::tcp::resolver::results_type& endpoints)
     {
@@ -413,10 +485,10 @@ public:
     {
         return msocket_;
     }
+    boost::system::error_code errorCode() { return error_code_; }
+    void close() {}
 private:
-    ASIOconnecter(boost::asio::io_context& context, std::function<onConnectedT> on_connected, std::function<onConnectFailedT> on_connect_failed)
-        : context_(context), msocket_(std::make_shared<boost::asio::ip::tcp::socket>(context)),
-        on_connected_(std::move(on_connected)), on_connect_failed_(std::move(on_connect_failed)) {}
+    boost::system::error_code error_code_;
 
     void doConnect()
     {
@@ -425,14 +497,17 @@ private:
         boost::asio::async_connect(*msocket_, end_points_, std::bind(&ASIOconnecter::onConnectFinished, self, std::placeholders::_1, std::placeholders::_2));
     }
 
-    void onConnectFinished(const boost::system::error_code &ecode, const typename boost::asio::ip::tcp::endpoint &ep)
-    {        
-        if(ecode.failed())
+    void onConnectFinished(const boost::system::error_code &err_code, const typename boost::asio::ip::tcp::endpoint &ep)
+    {
+        error_code_ = err_code;
+        if(err_code.failed())
         {
             if(on_connect_failed_) {
-                on_connect_failed_(ecode);
+                on_connect_failed_(err_code);
             } else {
-                throw std::runtime_error(std::string("Can't connect to host, error = ") + ecode.message());
+                std::stringstream str;
+                str<<"tea::asiocommunicator::ASIOconnecter::onConnectFinished: Can't connect to host: "<<err_code;
+                throw std::runtime_error(str.str());
             }
         } else {
             on_connected_(ep);
