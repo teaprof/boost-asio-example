@@ -351,7 +351,7 @@ public:
         on_resolved_safe_(&ASIOClient::onResolved, this), on_resolve_failed_safe_(&ASIOClient::onResolveFailed, this),
         on_connected_safe_(&ASIOClient::onConnected, this), on_connect_failed_safe_(&ASIOClient::onConnectFailed, this),
         resolver_(Resolver::create_shared_ptr(context, on_resolved_safe_, on_resolve_failed_safe_)),
-        connecter_(Connecter::create_shared_ptr(context, on_connected_safe_, on_connect_failed_safe_)),
+        connector_(Connector::create_shared_ptr(context, on_connected_safe_, on_connect_failed_safe_)),
         talker_(context) { }
 
     ASIOClient(const ASIOClient&) = delete;
@@ -411,7 +411,7 @@ private:
     void onResolved(const boost::asio::ip::tcp::resolver::results_type& endpoints)
     {
         status_ = Status::connecting;
-        connecter_->connect(endpoints);
+        connector_->connect(endpoints);
     }
 
     void onResolveFailed([[maybe_unused]] const boost::system::error_code &ecode)
@@ -421,7 +421,7 @@ private:
 
     void onConnected([[maybe_unused]] const typename boost::asio::ip::tcp::endpoint &ep)
     {
-        auto s = connecter_->socket();
+        auto s = connector_->socket();
         status_ = Status::connectedOk;
         talker_.setSocket(s);
         talker_.start();
@@ -437,7 +437,7 @@ private:
     SafeMemberFcnCallback<decltype(&ASIOClient::onConnected)> on_connected_safe_;
     SafeMemberFcnCallback<decltype(&ASIOClient::onConnectFailed)> on_connect_failed_safe_;
     std::shared_ptr<Resolver> resolver_;
-    std::shared_ptr<Connecter> connecter_;
+    std::shared_ptr<Connector> connector_;
     ASIOBufferedTalker talker_;
 };
 
