@@ -62,10 +62,12 @@ public:
         notStarted, working, closed, failed
     };
 
+    /*
     enum class BufferPolicy
     {
         allocNewBuffers, collectAndUsePreallocatedBuffers
     };
+    */
 
     explicit ASIOBufferedTalker(std::shared_ptr<boost::asio::ip::tcp::socket> socket):
         on_read_finished_safe_(&ASIOBufferedTalker::onReadFinished, this),
@@ -158,7 +160,7 @@ public:
     {
         return status_ == Status::closed || status_ == Status::failed;
     }
-    [[nodiscard]] bool isActive() const
+    [[nodiscard]] bool isWorking() const
     {
         return status_ == Status::working;
     }
@@ -216,7 +218,10 @@ public:
     ASIOServer& operator=(const ASIOServer&) = delete;
     ASIOServer& operator=(ASIOServer&&) = delete;
 
-    enum class Status {notStarted, Listening, notListening, closed, terminated};
+    // not impemented yet:
+    //enum class Status {notStarted, Listening, notListening, closed, terminated};
+    //[[nodiscard]] Status getStatus() const { return status_; }
+
 
     void startAccept(port_t port)
     {
@@ -236,6 +241,8 @@ public:
 
     bool receiveAnySession(size_t &session_id, MsgBody& buf)
     {
+        // read messages from the first non-empty queue
+        // todo: round robin may be better
         for(auto& [session, talker]: sessions_)
         {
             if(talker.receive(buf))
@@ -269,7 +276,7 @@ public:
     {
         size_t count = 0;
         for(const auto &it : sessions_) {
-            if(it.second.isActive()) {
+            if(it.second.isWorking()) {
                 count++;
             }
         }
