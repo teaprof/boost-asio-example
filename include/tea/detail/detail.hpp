@@ -93,16 +93,6 @@ public:
     ASIOBufferedTalker& operator=(const ASIOBufferedTalker&) = delete;
     ASIOBufferedTalker& operator=(ASIOBufferedTalker&&) = delete; 
 
-
-    //What should we do if move or copy constructor is called when async operation in progress?
-    //Despite we implement a special mechanism of safe callbacks, we delete this constructors
-    //because of the following reasons:
-    //1. If move constructor is called when an async operation in progress, it may indicate the logical
-    //error in the code (what shoud we do with pending async operation called for source object?
-    //Abandon it? Or redirect callback to a new object (there is no way to do this in the current project)?
-    //2. If copy constructor is called when an async operation in progress, what should we do with
-    //this operation callbacks? How to copy the pending async operation to a new object?
-
     void start()
     {
         reader_->startReadAsync();
