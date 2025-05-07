@@ -20,8 +20,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-#ifndef SAFECALLBACK_HPP
-#define SAFECALLBACK_HPP
+#ifndef _TEA_ASIO_DETAIL_SAFECALLBACK_HPP_
+#define _TEA_ASIO_DETAIL_SAFECALLBACK_HPP_
 
 #include<memory>
 #include<functional>
@@ -33,14 +33,14 @@ namespace tea::asiocommunicator {
 template<typename Function> struct SafeMemberFcnCallback;
 
 /*!
- * @brief The wrapper for any other class member function which prevents call 
+ * @brief The wrapper for any member functions which prevents call 
  * of the wrapped function if the object for which this member function is called is already destroyed.
  * 
- * @details The mechanism of preventing member function call for destroyed object
- * is based on the checking the value of shared boolean variable `is_alive`. When this variable
- * is true the call to this->operator() is translated to call of the wrapped function. When the object
+ * @details The pervention of member function call for destroyed object
+ * is based on checking the value of shared boolean variable `is_alive`. When this variable
+ * is true the call of `this` object is translated to call of the wrapped function. When the object
  * for which wrapped function is called is destroyed this variable should be set to false. The convinient
- * way to do this is to use class MemberFcnCallbackProtector
+ * way to do this is to use IsAliveTracker class
  * 
  * 
  * @tparam ClassType class which contains wrapped member function
@@ -54,13 +54,13 @@ public:
     using FunctionType = ReturnType(Args...);
     using MemberFunctionType = ReturnType(ClassType::*)(Args...);
     SafeMemberFcnCallback(const MemberFunctionType &func, ClassType* obj):
-        func_(func), obj_(obj), is_alive_(obj->isAlive())
+        func_(func), obj_(obj), is_alive_(obj->getIsAlivePtr())
     {
     }
 
-    //SafeMemberFcnCallback(SafeMemberFcnCallback&&) = delete;
+    SafeMemberFcnCallback(SafeMemberFcnCallback&&) = delete;
 
-    //SafeMemberFcnCallback(const SafeMemberFcnCallback<ReturnType(ClassType::*)(Args...)>& other) = default;
+    SafeMemberFcnCallback(const SafeMemberFcnCallback<ReturnType(ClassType::*)(Args...)>& other) = default;
 
     void invalidate() { *is_alive_ = false;}
 
@@ -88,7 +88,7 @@ class IsAliveTracker {
     ~IsAliveTracker() {
         *is_alive_ = false;
     }
-    std::shared_ptr<bool> isAlive() {
+    std::shared_ptr<bool> getIsAlivePtr() {
         return is_alive_;
     }
     private:
@@ -97,4 +97,4 @@ class IsAliveTracker {
 
 } /* namespace tea::asiocommunicator */
 
-#endif // SAFECALLBACK_HPP
+#endif // _TEA_ASIO_DETAIL_SAFECALLBACK_HPP_

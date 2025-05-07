@@ -36,7 +36,7 @@ Since we use shared pointers to prevent deletion of the communication objects, w
 
 ## Mid-level Talker object (ASIOBufferedTalker)
 
-The communication objects are responsible for single IO-operations that are currently in progress. The queue of all messages that were received or planned to be sent is stored in the mid-level `ASIOBufferedTalker` object. This class is declared in `detail.hpp`
+The communication objects are responsible for single IO-operations that are currently in progress. The queue of all messages that were received or planned to be sent is stored in the mid-level `ASIOBufferedTalker` object. This class is declared in `asioserverclient.hpp`
 
 The talker object has two queues: one for ingoing messages and one for outgoing. It exposes methods to read messages from the first queue and to write messages to the second queue. Other ends of these queues are connected to the `Reader` and `Writer` objects discussed before. The operation of them are controlled by the talker object itself.
 
@@ -59,7 +59,19 @@ Since `ASIOClient` and `ASIOServer` classes contains callback functions they are
 
 (*Not implemented yet*) `ASIOServer` can have one of the following statuses: notStarted, Listening, notListening, closed, terminated. The status of the server can be obtained using `getStatus()` member function
 
-Both `ASIOClient` and `ASIOServer` classes are declared in `detail.hpp`.
+Both `ASIOClient` and `ASIOServer` classes are declared in `asioserverclient.hpp`.
+
+## Safe callback implementation
+
+
+When callback function is member function we should check if it's parent object is still alive before calling this function. For this purpose we utilize a `shared_ptr<bool>` variable named `is_alive`. The implementation consists of two classes. 
+
+The first class `SafeMemberFcnCallback` is a smart wrapper for other function. It looks like std::function, but before invoking wrapped function it checks if its parent object is still alive.
+
+The second class `IsAliveTracker` contains the shared pointer to the bool variable that has initial value set to true. When the destructor of this class is called, this bool variable is set to false indicating that the object is destroyed. This class is used as a base class for classes that wraps asynchronous operations.
+
+Both classes `SafeMemberFcnCallback` and `IsAliveTracker` are declared in `safecallback.hpp`
+
 
 
 ## High-level Client and Server objects
@@ -68,20 +80,10 @@ Both `ASIOClient` and `ASIOServer` classes are declared in `detail.hpp`.
 
 The high-level classes `Server` and `Client` objects wrap mid-level `ASIOClient` and `ASIOServer` objects respectively but unlike them the high-level objects can be created without using of the shared pointers.
 
-The `Server` and `Client` classes are declared in `asiocommunicator.hpp`.
+The `Server` and `Client` classes are declared in `asioserverclient.hpp`.
 
 
 The `Server` and `Client` classes are generalized by allowing them to send and receive any data type. This is achieved by using templates. Of course, when you do `read<YourMessageType>(msg)`, you must be sure that the network counterpartner sends exactly the same data  (with the same representation of this data in memory).
 
 (*Not implemented yet*) In addition, high-level objects support move semantics.
- Safe callback implementation
-
-When callback function is member function of some object, we should check if this object is still alive before calling this function. For this purpose we utilize a shared_ptr to bool variable. Our implementation consists of two classes. 
-
-The first class `SafeCallback` is a wrapper for callback member function that is very close to std::function, but before invoking wrapped function it checks the boolean variable protecting this callback. 
-
-The second class `IsAliveTracker` contains the shared pointer to the bool variable that has initial value set to true. When the destructor of this class is called, this bool variable is set to false indicating that the object is destroyed. This class is used as a base class for classes that wraps asynchronous operations.
-
-
-safecallback.hpp:
-SafeMemberFcnCallback
+ 

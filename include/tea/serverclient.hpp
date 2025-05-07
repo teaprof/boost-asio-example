@@ -20,12 +20,10 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-/// \todo: rename, this file contains high level objects
-
 #ifndef ASIOCOMMUNICATOR_H
 #define ASIOCOMMUNICATOR_H
 
-#include "detail/detail.hpp"
+#include "detail/asioserverclient.hpp"
 
 namespace tea::asiocommunicator {
 

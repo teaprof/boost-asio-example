@@ -20,52 +20,29 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-#ifndef _TEA_ASIO_DETAIL_MESSAGE_HPP_
-#define _TEA_ASIO_DETAIL_MESSAGE_HPP_
+#ifndef _TEA_ASIO_DETAIL_GLOBAL_CONTEXT
+#define _TEA_ASIO_DETAIL_GLOBAL_CONTEXT
 
-#include <cstdint>
-#include <vector>
+#include <boost/asio.hpp>
 
 namespace tea::asiocommunicator {
 
-using byte = uint8_t;
-using MsgBody = std::vector<byte>;
-
-
 namespace detail {
 
-/*!
-* \brief Header part of every message send or received by this library
-* \details The header contains two values:
-* - the signature of the header
-* - the length of the message body
-*/
-struct MsgHeader final
+struct GetContext
 {
-    /// Message header should start with the following signature:
-    static constexpr uint32_t header_signature = 0x1234;
-
-    uint32_t signature; //should be equal to header_signature
-    uint32_t msglen{0};  //len of the message in bytes
-    MsgHeader() : signature(header_signature) {}
-    void* data()
+    /*!
+    * \brief returns reference to the static context that is used by all objects in this library
+    */
+    static boost::asio::io_context& get()
     {
-        return &signature;
-    }
-    static size_t headerLen()
-    {
-        return sizeof(MsgHeader);
-    }
-    void initialize(const MsgBody& body)
-    {
-        signature = header_signature;
-        msglen = body.size();
+        static boost::asio::io_context context;
+        return context;
     }
 };
-
 
 } /* namespace detail */
 
 } /* namespace tea::asiocommunicator */
 
-#endif // _TEA_ASIO_DETAIL_MESSAGE_HPP_
+#endif // _TEA_ASIO_DETAIL_GLOBAL_CONTEXT

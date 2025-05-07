@@ -20,10 +20,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-/// \todo: consider renaming this file to comobjects.hpp
-
-#ifndef _TEA_ASIOCOMMUNICATOR_DETAIL_ASYNCOPERATIONS_H
-#define _TEA_ASIOCOMMUNICATOR_DETAIL_ASYNCOPERATIONS_H
+#ifndef _TEA_ASIO_DETAIL_ASYNCOPERATIONS_HPP_
+#define _TEA_ASIO_DETAIL_ASYNCOPERATIONS_HPP_
 
 #include "safecallback.hpp"
 #include "message.hpp"
@@ -559,4 +557,4 @@ private:
 
 } /* namespace tea::asiocommunicator */
 
-#endif // _TEA_ASIOCOMMUNICATOR_DETAIL_ASYNCOPERATIONS_H
+#endif // _TEA_ASIO_DETAIL_ASYNCOPERATIONS_HPP_

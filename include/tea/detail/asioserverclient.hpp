@@ -20,12 +20,13 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-#ifndef _TEA_ASIOCOMMUNICATOR_DETAIL_H
-#define _TEA_ASIOCOMMUNICATOR_DETAIL_H
+#ifndef _TEA_ASIO_DETAIL_ASIOSERVERCLIENT_HPP_
+#define _TEA_ASIO_DETAIL_ASIOSERVERCLIENT_HPP_
 
 #include "safecallback.hpp"
 #include "message.hpp"
 #include "asyncoperations.hpp"
+#include "globalcontext.hpp"
 #include <boost/asio.hpp>
 #include <boost/smart_ptr.hpp>
 #include <memory>
@@ -40,20 +41,7 @@ namespace tea::asiocommunicator {
 
 namespace detail {
 
-struct GetContext
-{
-    /*!
-    * \brief returns reference to the static context that is used by all objects in this library
-    */
-    static boost::asio::io_context& get()
-    {
-        static boost::asio::io_context context;
-        return context;
-    }
-};
-
 //ASIOtalker is a class that implements sending and receiving messages.
-/// \todo: may be split into Reader and Writers
 class ASIOBufferedTalker : public IsAliveTracker //todo: maybe rename to QueuedTalker?
 {
 public:
@@ -442,4 +430,5 @@ private:
 
 } /* namespace tea::asiocommunicator */
 
-#endif // _TEA_ASIOCOMMUNICATOR_DETAIL_H
+#endif // _TEA_ASIO_DETAIL_ASIOSERVERCLIENT_HPP_
+
