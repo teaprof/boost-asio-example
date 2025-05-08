@@ -33,14 +33,15 @@ namespace tea::asiocommunicator {
 template<typename Function> struct SafeMemberFcnCallback;
 
 /*!
- * @brief The wrapper for any member functions which prevents call 
- * of the wrapped function if the object for which this member function is called is already destroyed.
+ * @brief The wrapper for member functions which prevents call 
+ * of the member function if the object for which this member function is called is already destroyed.
  * 
- * @details The pervention of member function call for destroyed object
- * is based on checking the value of shared boolean variable `is_alive`. When this variable
- * is true the call of `this` object is translated to call of the wrapped function. When the object
- * for which wrapped function is called is destroyed this variable should be set to false. The convinient
- * way to do this is to use IsAliveTracker class
+ * @details The object containing the member function should set `is_alive` variable to false
+ * before being destroyed. When `this` object is called it checks `is_alive` flag and
+ * calls the wrapped member function only if this flag is true. 
+ * 
+ * The convinient way to manage `is_alive` flag is to use `IsAliveTracker` class as the base
+ * class for tracked object.
  * 
  * 
  * @tparam ClassType class which contains wrapped member function

@@ -41,7 +41,7 @@ namespace tea::asiocommunicator {
 
 namespace detail {
 
-//ASIOtalker is a class that implements sending and receiving messages.
+//ASIOBufferedTalker is a class that implements sending and receiving messages.
 class ASIOBufferedTalker : public IsAliveTracker //todo: maybe rename to QueuedTalker?
 {
 public:
@@ -51,7 +51,7 @@ public:
     };
 
     /*
-    enum class BufferPolicy
+    enum class BufferAllocationPolicy
     {
         allocNewBuffers, collectAndUsePreallocatedBuffers
     };

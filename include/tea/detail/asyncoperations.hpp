@@ -53,17 +53,21 @@ using onResolveFailedT = void(const boost::system::error_code&);
 using onConnectedT = void(const typename boost::asio::ip::tcp::endpoint&);
 using onConnectFailedT = void(const boost::system::error_code&);
 
-//! The base class for any other classes wrapping boost::asio async operations.
+//! The base class for any other classes wrapping boost::asio async operations
 /**
- * This class protects the derived classes from deletion during asyncronous 
- * operations. Since such objects incapsulate
- * buffers and callback functions for async io operations, it means that they
- * should not be destroyed before asyncronous operation is completed or cancelled.
- * For the same reason, they should not be copied and moved.
+ * Communication objects are the objects that contain buffers and callback member 
+ * functions for asynchronous operations. They should not be destroyed, copied or 
+ * moved while the async operation is in progress. This class helps to meet
+ * these requirements when used as a base class for communication objects.
  * 
- * To prevent the deletion of such objects during async operation in progress 
- * the objects of derived types are managed by shared pointers. The direct creation
- * of such objects is prohibited (constructor is declared as private).
+ * To avoid destroying when any async operation is in progress the shared 
+ * pointers are used. For these reason, `create_shared_ptr` and 
+ * `create_shared_ptr_fast` function are exposed. To avoid calling the constructor
+ * directly the derived class should make it private.
+ * 
+ * To avoid copying or moving, the copy and move constructors and assignment operators
+ * are deleted.
+ * 
  * @tparam T is the type of the derived class
  */
 template<class T>
